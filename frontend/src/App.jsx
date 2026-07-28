@@ -1,21 +1,20 @@
-import { Link, Outlet } from "react-router-dom";
+import { Outlet } from "react-router-dom";
+import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
+import { LanguageProvider } from "./i18n";
 
-// App shell: a slim top bar shared across pages.
 export default function App() {
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="topbar-inner">
-          <Link to="/" className="brand">
-            <span className="brand-mark">F</span>
-            <span className="brand-name">Finsight</span>
-          </Link>
-          <span className="topbar-tag">Document Q&amp;A</span>
+    <LanguageProvider>
+      <div className="bg-background font-body-lg text-body-lg text-on-background min-h-screen">
+        <Sidebar />
+        <div className="pl-sidebar-width flex flex-col min-h-screen">
+          <Header />
+          <main className="flex-1 pt-16 flex flex-col items-center">
+            <Outlet />
+          </main>
         </div>
-      </header>
-      <main className="main">
-        <Outlet />
-      </main>
-    </div>
+      </div>
+    </LanguageProvider>
   );
 }

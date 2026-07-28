@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { useLanguage } from "../i18n.jsx";
 
 const ACCEPT = ".pdf,.md,.markdown,.json";
 
-// Left column of the session page: upload + manage documents.
-export default function DocumentPanel({ sessionId, documents, onChange }) {
+export default function DocumentPanel({ sessionId, documents, onChange, inputRef }) {
+  const { t } = useLanguage();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef(null);
 
-  // Indexing now runs server-side in the background, so a freshly uploaded
-  // document starts as "processing". Poll until nothing is processing anymore.
   const hasProcessing = documents.some((d) => d.status === "processing");
   useEffect(() => {
     if (!hasProcessing) return;
@@ -35,12 +32,6 @@ export default function DocumentPanel({ sessionId, documents, onChange }) {
     }
   }
 
-  function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files?.length) uploadFiles([...e.dataTransfer.files]);
-  }
-
   async function handleDelete(docId) {
     if (!confirm("Remove this document from the session?")) return;
     try {
@@ -52,19 +43,9 @@ export default function DocumentPanel({ sessionId, documents, onChange }) {
   }
 
   return (
-    <aside className="doc-panel">
-      <h2 className="panel-title">Documents</h2>
-
-      <div
-        className={`dropzone${dragOver ? " drag" : ""}`}
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-      >
+    <div className="fixed bottom-24 right-0 left-sidebar-width z-20 pointer-events-none flex justify-center">
+      <div className="max-w-chat-max-width w-full px-margin-desktop pointer-events-auto flex flex-wrap gap-2 justify-center">
+        {/* Hidden File Input */}
         <input
           ref={inputRef}
           type="file"
@@ -73,59 +54,38 @@ export default function DocumentPanel({ sessionId, documents, onChange }) {
           hidden
           onChange={(e) => e.target.files?.length && uploadFiles([...e.target.files])}
         />
-        <p className="dropzone-title">
-          {uploading ? "Uploading…" : "Drop files or click to upload"}
-        </p>
-        <p className="dropzone-hint">PDF, Markdown (.md) or JSON · up to 50 MB</p>
-      </div>
 
-      {error && <p className="error-text">{error}</p>}
-
-      <ul className="doc-list">
-        {documents.length === 0 && (
-          <li className="doc-empty">No documents uploaded yet.</li>
+        {error && <div className="bg-error-container text-on-error-container px-3 py-1 rounded-full text-xs font-label-mono">{error}</div>}
+        {uploading && (
+          <div className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm text-xs font-label-mono text-on-surface animate-pulse border border-outline-variant/30">
+            <span className="material-symbols-outlined text-[14px]">cloud_upload</span> {t("Uploading...")}
+          </div>
         )}
-        {documents.map((d) => (
-          <li key={d.id} className="doc-item">
-            <div className="doc-item-main">
-              <span className={`kind-badge kind-${d.kind}`}>{d.kind.toUpperCase()}</span>
-              <span className="doc-name" title={d.filename}>{d.filename}</span>
-            </div>
-            <div className="doc-item-meta">
-              <StatusBadge status={d.status} error={d.error} />
-              {d.status === "ready" && (
-                <span className="subtle">{d.chunk_count} chunks · {d.source}</span>
-              )}
-              {d.status === "processing" && (
-                <span className="subtle">{d.progress ?? 0}%</span>
-              )}
-              <button className="icon-btn" title="Remove" onClick={() => handleDelete(d.id)}>
-                ✕
-              </button>
-            </div>
-            {d.status === "processing" && (
-              <div className="doc-progress" aria-label={`Indexing ${d.progress ?? 0}%`}>
-                <div
-                  className="doc-progress-bar"
-                  style={{ width: `${d.progress ?? 0}%` }}
-                />
-              </div>
-            )}
-            {d.status === "failed" && d.error && (
-              <p className="doc-error" title={d.error}>{d.error}</p>
-            )}
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
-}
 
-function StatusBadge({ status }) {
-  const map = {
-    ready: "Ready",
-    processing: "Processing",
-    failed: "Failed",
-  };
-  return <span className={`status-badge status-${status}`}>{map[status] || status}</span>;
+        {documents.map((d) => (
+          <div key={d.id} className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm border border-outline-variant/30 group">
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-label-mono uppercase ${d.kind === 'pdf' ? 'bg-error/10 text-error' : 'bg-primary-container/10 text-primary-fixed-dim'}`}>
+              {d.kind}
+            </span>
+            <span className="text-xs font-body-sm text-on-surface max-w-[120px] truncate" title={d.filename}>{d.filename}</span>
+            
+            {d.status === "processing" ? (
+              <span className="text-[10px] font-label-mono text-secondary ml-1 animate-pulse">{(d.progress ?? 0)}%</span>
+            ) : d.status === "failed" ? (
+              <span className="text-[10px] font-label-mono text-error ml-1" title={d.error}>{t("Failed")}</span>
+            ) : (
+               <span className="text-[10px] font-label-mono text-on-surface-variant ml-1">{d.chunk_count}c</span>
+            )}
+            
+            <button 
+              className="ml-1 w-4 h-4 rounded-full flex items-center justify-center hover:bg-error/20 hover:text-error text-on-surface-variant transition-colors"
+              onClick={() => handleDelete(d.id)}
+            >
+              <span className="material-symbols-outlined text-[12px]">close</span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
