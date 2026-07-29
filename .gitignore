@@ -48,6 +48,7 @@ frontend/dist/
 # ---- Logs & temp ----
 *.log
 .cache/
+get-pip.py
 
 # ---- OS / editor ----
 .DS_Store
