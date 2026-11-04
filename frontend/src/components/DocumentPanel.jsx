@@ -4,20 +4,36 @@ import { useLanguage } from "../i18n.jsx";
 
 const ACCEPT = ".pdf,.md,.markdown,.json";
 
-export default function DocumentPanel({ sessionId, documents, onChange, inputRef }) {
-  const { t } = useLanguage();
+// Document tray that stays visible above the fixed chat composer.
+// Compatible with the existing SessionPage props and FastAPI document endpoints.
+export default function DocumentPanel({ sessionId, documents = [], onChange, inputRef }) {
+  const { lang } = useLanguage();
+  const vi = lang === "VN";
+  const docs = Array.isArray(documents) ? documents : [];
+  const [expanded, setExpanded] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState("");
 
-  const hasProcessing = documents.some((d) => d.status === "processing");
+  const hasProcessing = docs.some((d) => d.status === "processing");
+
+  useEffect(() => {
+    setExpanded(true);
+    setError("");
+  }, [sessionId]);
+
   useEffect(() => {
     if (!hasProcessing) return;
-    const timer = setInterval(() => { onChange(); }, 1500);
+    const timer = setInterval(() => {
+      Promise.resolve(onChange()).catch((e) => setError(e.message || String(e)));
+    }, 1500);
     return () => clearInterval(timer);
   }, [hasProcessing, onChange]);
 
   async function uploadFiles(files) {
+    if (!files.length || uploading) return;
     setError("");
+    setExpanded(true);
     setUploading(true);
     try {
       for (const file of files) {
@@ -25,66 +41,127 @@ export default function DocumentPanel({ sessionId, documents, onChange, inputRef
       }
       await onChange();
     } catch (e) {
-      setError(e.message);
+      setError(e.message || String(e));
+      // Some uploads may have succeeded before another failed.
+      try { await onChange(); } catch { /* original error is retained */ }
     } finally {
       setUploading(false);
-      if (inputRef.current) inputRef.current.value = "";
+      if (inputRef?.current) inputRef.current.value = "";
     }
   }
 
-  async function handleDelete(docId) {
-    if (!confirm("Remove this document from the session?")) return;
+  async function deleteFile(doc) {
+    if (deletingId !== null) return;
+    const prompt = vi
+      ? `Xóa tài liệu "${doc.filename}" khỏi hội thoại này?`
+      : `Remove "${doc.filename}" from this conversation?`;
+    if (!window.confirm(prompt)) return;
+    setError("");
+    setDeletingId(doc.id);
     try {
-      await api.deleteDocument(sessionId, docId);
+      await api.deleteDocument(sessionId, doc.id);
       await onChange();
     } catch (e) {
-      setError(e.message);
+      setError(e.message || String(e));
+      try { await onChange(); } catch { /* keep the delete error */ }
+    } finally {
+      setDeletingId(null);
     }
+  }
+
+  function statusLabel(doc) {
+    if (doc.status === "processing") {
+      return vi ? `Đang xử lý ${doc.progress ?? 0}%` : `Processing ${doc.progress ?? 0}%`;
+    }
+    if (doc.status === "ready") {
+      return vi ? `Sẵn sàng · ${doc.chunk_count ?? 0} đoạn` : `Ready · ${doc.chunk_count ?? 0} chunks`;
+    }
+    if (doc.status === "failed") return vi ? "Xử lý thất bại" : "Processing failed";
+    return doc.status || (vi ? "Chưa rõ trạng thái" : "Unknown status");
   }
 
   return (
-    <div className="fixed bottom-24 right-0 left-sidebar-width z-20 pointer-events-none flex justify-center">
-      <div className="max-w-chat-max-width w-full px-margin-desktop pointer-events-auto flex flex-wrap gap-2 justify-center">
-        {/* Hidden File Input */}
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPT}
-          multiple
-          hidden
-          onChange={(e) => e.target.files?.length && uploadFiles([...e.target.files])}
-        />
-
-        {error && <div className="bg-error-container text-on-error-container px-3 py-1 rounded-full text-xs font-label-mono">{error}</div>}
-        {uploading && (
-          <div className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm text-xs font-label-mono text-on-surface animate-pulse border border-outline-variant/30">
-            <span className="material-symbols-outlined text-[14px]">cloud_upload</span> {t("Uploading...")}
-          </div>
-        )}
-
-        {documents.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm border border-outline-variant/30 group">
-            <span className={`px-1.5 py-0.5 rounded text-[9px] font-label-mono uppercase ${d.kind === 'pdf' ? 'bg-error/10 text-error' : 'bg-primary-container/10 text-primary-fixed-dim'}`}>
-              {d.kind}
-            </span>
-            <span className="text-xs font-body-sm text-on-surface max-w-[120px] truncate" title={d.filename}>{d.filename}</span>
-            
-            {d.status === "processing" ? (
-              <span className="text-[10px] font-label-mono text-secondary ml-1 animate-pulse">{(d.progress ?? 0)}%</span>
-            ) : d.status === "failed" ? (
-              <span className="text-[10px] font-label-mono text-error ml-1" title={d.error}>{t("Failed")}</span>
-            ) : (
-               <span className="text-[10px] font-label-mono text-on-surface-variant ml-1">{d.chunk_count}c</span>
-            )}
-            
-            <button 
-              className="ml-1 w-4 h-4 rounded-full flex items-center justify-center hover:bg-error/20 hover:text-error text-on-surface-variant transition-colors"
-              onClick={() => handleDelete(d.id)}
+    <div id="finsight-document-manager" className="relative w-full scroll-mt-24">
+      <div className="w-full">
+        <section className="rounded-2xl border border-outline-variant/50 bg-surface-container-lowest shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              aria-expanded={expanded}
+              title={vi ? "Ẩn/hiện tài liệu" : "Show/hide documents"}
+              className="flex min-w-0 items-center gap-2 text-on-surface hover:opacity-80"
             >
-              <span className="material-symbols-outlined text-[12px]">close</span>
+              <span className="material-symbols-outlined text-[19px]">folder_open</span>
+              <span className="text-sm font-semibold truncate">
+                {vi ? "Tài liệu" : "Documents"} ({docs.length})
+              </span>
+              <span className="material-symbols-outlined text-[18px]">
+                {expanded ? "expand_more" : "expand_less"}
+              </span>
             </button>
+            <span className="text-[11px] text-on-surface-variant text-right">
+              {vi ? "Tải lên bằng biểu tượng kẹp giấy trong ô chat" : "Use the paperclip in chat to upload"}
+            </span>
           </div>
-        ))}
+
+          <input
+            ref={inputRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            hidden
+            onChange={(e) => {
+              const selected = Array.from(e.target.files || []);
+              if (selected.length) uploadFiles(selected);
+            }}
+          />
+
+          {error && <div role="alert" className="mx-3 mb-2 rounded-lg bg-error-container px-3 py-2 text-xs text-on-error-container">{error}</div>}
+          {uploading && (
+            <div role="status" className="px-4 pb-2 text-xs text-on-surface-variant animate-pulse">
+              {vi ? "Đang tải tài liệu lên..." : "Uploading documents..."}
+            </div>
+          )}
+
+          {expanded && (
+            <div className="max-h-44 overflow-y-auto border-t border-outline-variant/30 px-3 py-2 space-y-1.5">
+              {docs.length === 0 && !uploading && (
+                <p className="text-xs text-on-surface-variant py-1">
+                  {vi ? "Chưa có tài liệu nào trong hội thoại này." : "No documents in this conversation yet."}
+                </p>
+              )}
+              {docs.map((doc) => (
+                <div key={doc.id} className="flex items-center gap-2 rounded-xl bg-surface-container-low px-3 py-2 border border-outline-variant/20">
+                  <span className="material-symbols-outlined text-[19px] text-on-surface-variant shrink-0">
+                    {doc.kind === "pdf" ? "picture_as_pdf" : "description"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-on-surface truncate" title={doc.filename}>{doc.filename}</div>
+                    <div
+                      className={`text-[11px] ${doc.status === "failed" ? "text-error" : "text-on-surface-variant"}`}
+                      title={doc.error || ""}
+                    >
+                      {statusLabel(doc)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    title={vi ? `Xóa ${doc.filename}` : `Delete ${doc.filename}`}
+                    aria-label={vi ? `Xóa tài liệu ${doc.filename}` : `Delete document ${doc.filename}`}
+                    disabled={deletingId !== null}
+                    onClick={() => deleteFile(doc)}
+                    className="flex shrink-0 w-8 h-8 items-center justify-center rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-[19px]">
+                      {deletingId === doc.id ? "hourglass_empty" : "delete"}
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

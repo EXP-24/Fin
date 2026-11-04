@@ -11,11 +11,30 @@ export default function Sidebar() {
   const [sessions, setSessions] = useState([]);
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
   
   useEffect(() => {
     // Fetch sessions
     api.listSessions().then(setSessions).catch(console.error);
   }, [location.pathname]); // Refresh when navigating
+
+  // FINSIGHT_DELETE_UI_PATCH_V3: Delete from the sidebar using the existing API.
+  async function handleDeleteSession(session) {
+    if (!window.confirm(`Xóa hội thoại "${session.name || "Không có tiêu đề"}" và các tài liệu liên quan?`)) return;
+    setDeletingId(session.id);
+    setDeleteError("");
+    try {
+      await api.deleteSession(session.id);
+      setSessions((current) => current.filter((item) => item.id !== session.id));
+      if (location.pathname === `/sessions/${session.id}`) navigate("/");
+    } catch (error) {
+      setDeleteError(error.message || "Không thể xóa hội thoại.");
+      api.listSessions().then(setSessions).catch(console.error);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-sidebar-width bg-surface-container-low flex flex-col z-50">
@@ -63,18 +82,29 @@ export default function Sidebar() {
                 <div className="text-xs text-on-surface-variant italic px-4 py-2">{t("No previous chats.")}</div>
               ) : (
                 sessions.map(s => (
-                  <Link
-                    key={s.id}
-                    to={`/sessions/${s.id}`}
-                    className={`text-sm py-2 px-3 rounded-lg truncate transition-colors ${
-                      location.pathname === `/sessions/${s.id}`
-                        ? "bg-surface-container-high text-on-surface font-semibold"
-                        : "text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-                    }`}
-                    title={s.name}
-                  >
-                    {s.name || t("Untitled Session")}
-                  </Link>
+                  <div key={s.id} className="group flex items-center gap-1">
+                    <Link
+                      to={`/sessions/${s.id}`}
+                      className={`flex-1 min-w-0 text-sm py-2 px-3 rounded-lg truncate transition-colors ${
+                        location.pathname === `/sessions/${s.id}`
+                          ? "bg-surface-container-high text-on-surface font-semibold"
+                          : "text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                      }`}
+                      title={s.name}
+                    >
+                      {s.name || t("Untitled Session")}
+                    </Link>
+                    <button
+                      type="button"
+                      title="Xóa hội thoại"
+                      aria-label={`Xóa hội thoại ${s.name || "Không có tiêu đề"}`}
+                      onClick={() => handleDeleteSession(s)}
+                      disabled={deletingId === s.id}
+                      className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error/10 disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -91,6 +121,7 @@ export default function Sidebar() {
         >
           <span className="material-symbols-outlined">compare_arrows</span>{t("Comparisons")}
         </Link>
+        {deleteError && <p role="alert" className="px-3 py-2 text-xs text-error">{deleteError}</p>}
       </nav>
 
       <div className="mt-auto p-4 border-t border-outline-variant/30 flex flex-col gap-4 relative">
@@ -125,7 +156,7 @@ export default function Sidebar() {
               src="https://lh3.googleusercontent.com/aida-public/AB6AXuCW-6jct90_7PrsMxOasVk50TZPq3bLoMsaEsaCYHFfLsguRjpLQdKMV7jw2qQ9glNek-OGu_VIxh8qnsJ9TgRZhV1Op3y0fCBkwebEPUMOHk7smMNzBpoZrQcgLdAnKhDkLM5tBqXQM9BBkS__OmtNEIbivxOURLn_vcAFBrHUZOD9rjbkhLlcFpfcyKqieYQC8VXdGoJ1zRtb1uhv_Z0TyeW8OQwawBlVQVXDCApLJz12G4Y2FFhEFmzwBfQOkSrQqwLL5DWsaD0"
             />
             <div className="flex-1 flex flex-col items-start truncate">
-              <span className="font-body-sm text-sm font-semibold text-on-surface truncate">Vinh Nguyen</span>
+              <span className="font-body-sm text-sm font-semibold text-on-surface truncate">Mr.X</span>
               <span className="font-body-sm text-xs text-on-surface-variant truncate">Premium User</span>
             </div>
             <span className="material-symbols-outlined text-on-surface-variant text-[20px]">

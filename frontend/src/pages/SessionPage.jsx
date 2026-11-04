@@ -55,17 +55,18 @@ export default function SessionPage() {
       </div>
 
       <div className="flex flex-col w-full space-y-6">
-        <ChatPanel 
-          sessionId={sessionId} 
-          ready={ready} 
-          initialPrompt={initialPrompt}
-          onUploadClick={() => uploadInputRef.current?.click()}
-        />
         <DocumentPanel 
           sessionId={sessionId} 
           documents={documents} 
           onChange={refresh} 
           inputRef={uploadInputRef}
+        />
+        <ChatPanel 
+          sessionId={sessionId} 
+          ready={ready} 
+          initialPrompt={initialPrompt}
+          onUploadClick={() => uploadInputRef.current?.click()}
+          documentCount={documents.length}
         />
       </div>
     </div>

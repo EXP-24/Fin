@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useLanguage } from "../i18n.jsx";
 
-export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadClick }) {
+export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadClick, documentCount = 0 }) {
   const { t } = useLanguage();
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState("");
@@ -11,26 +11,53 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
   const scrollRef = useRef(null);
 
   // Initialize with initialPrompt if provided
-  useEffect(() => {
-    if (initialPrompt && messages.length === 0 && !sending) {
-      setQuestion(initialPrompt);
-      // Auto-send if initialPrompt is present
-      setTimeout(() => {
-        handleSendPrompt(initialPrompt);
-      }, 500);
-    }
-  }, [initialPrompt]);
+  
+  const submittingRef = useRef(false);
 
   useEffect(() => {
-    api.getHistory(sessionId).then(setMessages).catch(() => {});
-  }, [sessionId]);
+    let active = true;
+    let timerId;
+
+    api.getHistory(sessionId)
+      .then((history) => {
+        if (!active) return;
+
+        setMessages(history);
+
+        const prompt = initialPrompt?.trim();
+        if (!prompt) return;
+
+        // Không gửi lại câu hỏi đã có trong lịch sử
+        const exists = history.some(
+          (m) =>
+            m.role === "user" &&
+            m.content?.trim() === prompt
+        );
+
+        if (exists) return;
+
+        timerId = setTimeout(() => {
+          if (active) handleSendPrompt(prompt);
+        }, 500);
+      })
+      .catch((err) => {
+        if (active) setError(err.message);
+      });
+
+    return () => {
+      active = false;
+      clearTimeout(timerId);
+    };
+  }, [sessionId, initialPrompt]);
+
 
   useEffect(() => {
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   }, [messages, sending]);
 
   async function handleSendPrompt(q) {
-    if (!q || sending) return;
+    if (!q || submittingRef.current) return;
+    submittingRef.current = true;
     setError("");
     setQuestion("");
     setMessages((prev) => [...prev, { role: "user", content: q, citations: [] }]);
@@ -44,6 +71,7 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
     } catch (err) {
       setError(err.message);
     } finally {
+      submittingRef.current = false;
       setSending(false);
     }
   }
@@ -104,6 +132,16 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
                   onClick={onUploadClick}
                 >
                   <span className="material-symbols-outlined">attach_file</span>
+                </button>
+                <button
+                  type="button"
+                  title="Xem các tài liệu đã tải lên"
+                  aria-label={`Xem ${documentCount} tài liệu trong hội thoại`}
+                  onClick={() => document.getElementById("finsight-document-manager")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-2 text-xs text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">folder_open</span>
+                  <span>{documentCount}</span>
                 </button>
                 <input 
                   className="flex-1 bg-transparent border-none outline-none px-4 font-body-lg text-body-lg text-on-surface placeholder:text-outline" 

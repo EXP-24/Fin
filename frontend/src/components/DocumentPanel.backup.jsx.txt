@@ -1,0 +1,107 @@
+import { useEffect, useState } from "react";
+import { api } from "../api.js";
+import { useLanguage } from "../i18n.jsx";
+
+const ACCEPT = ".pdf,.md,.markdown,.json";
+
+export default function DocumentPanel({ sessionId, documents, onChange, inputRef }) {
+  const { t } = useLanguage();
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const hasProcessing = documents.some((d) => d.status === "processing");
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const timer = setInterval(() => { onChange(); }, 1500);
+    return () => clearInterval(timer);
+  }, [hasProcessing, onChange]);
+
+  async function uploadFiles(files) {
+    setError("");
+    setUploading(true);
+    try {
+      for (const file of files) {
+        await api.uploadDocument(sessionId, file);
+      }
+      await onChange();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  async function handleDelete(docId) {
+    if (!window.confirm("Xóa tài liệu này khỏi hội thoại?")) return;
+    setError("");
+    try {
+      await api.deleteDocument(sessionId, docId);
+    } catch (e) {
+      setError(e.message || "Không thể xóa tài liệu.");
+    } finally {
+      // The server may delete the DB row before another storage cleanup fails.
+      try { await onChange(); } catch (e) { setError(e.message); }
+    }
+  }
+
+  return (
+    <div className="relative order-first z-10 w-full">
+      <div className="w-full flex flex-wrap gap-2 items-center p-3 rounded-xl border border-outline-variant/30 bg-surface-container-low">
+        {/* FINSIGHT_DELETE_UI_PATCH_V3: Visible document manager */}
+        <div className="w-full flex items-center justify-between mb-1">
+          <span className="text-sm font-semibold text-on-surface">Tài liệu ({documents.length})</span>
+          <button type="button" className="rounded-lg px-3 py-1.5 text-xs bg-primary text-on-primary hover:opacity-80" onClick={() => inputRef.current?.click()}>+ Tải tài liệu</button>
+        </div>
+        {/* Hidden File Input */}
+        <input
+          ref={inputRef}
+          type="file"
+          accept={ACCEPT}
+          multiple
+          hidden
+          onChange={(e) => e.target.files?.length && uploadFiles([...e.target.files])}
+        />
+
+        {error && <div className="bg-error-container text-on-error-container px-3 py-1 rounded-full text-xs font-label-mono">{error}</div>}
+        {uploading && (
+          <div className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm text-xs font-label-mono text-on-surface animate-pulse border border-outline-variant/30">
+            <span className="material-symbols-outlined text-[14px]">cloud_upload</span> {t("Uploading...")}
+          </div>
+        )}
+
+        {documents.length === 0 && !uploading && (
+          <p className="text-xs text-on-surface-variant">Chưa có tài liệu trong hội thoại này.</p>
+        )}
+        {documents.map((d) => (
+          <div key={d.id} className="flex items-center gap-2 bg-surface-container-highest px-3 py-1.5 rounded-full shadow-sm border border-outline-variant/30 group">
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-label-mono uppercase ${d.kind === 'pdf' ? 'bg-error/10 text-error' : 'bg-primary-container/10 text-primary-fixed-dim'}`}>
+              {d.kind}
+            </span>
+            <span className="text-xs font-body-sm text-on-surface max-w-[120px] truncate" title={d.filename}>{d.filename}</span>
+            
+            {d.status === "processing" ? (
+              <span className="text-[10px] font-label-mono text-secondary ml-1 animate-pulse">{(d.progress ?? 0)}%</span>
+            ) : d.status === "failed" ? (
+              <span className="text-[10px] font-label-mono text-error ml-1" title={d.error}>{t("Failed")}</span>
+            ) : d.status === "ready" ? (
+               <span className="text-[10px] font-label-mono text-on-surface-variant ml-1">Ready · {d.chunk_count} chunks</span>
+            ) : (
+               <span className="text-[10px] font-label-mono text-on-surface-variant ml-1">{d.status}</span>
+            )}
+            
+            <button 
+              type="button"
+              title="Xóa tài liệu"
+              aria-label={`Xóa tài liệu ${d.filename}`}
+              className="ml-1 w-7 h-7 rounded-full flex items-center justify-center hover:bg-error/20 hover:text-error text-on-surface-variant transition-colors"
+              onClick={() => handleDelete(d.id)}
+            >
+              <span className="material-symbols-outlined text-[12px]">close</span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

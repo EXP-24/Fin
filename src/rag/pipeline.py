@@ -28,6 +28,7 @@ from .financial_sections import route_query
 from .llm import GroqClient
 from .reranker import Reranker
 from .vectorstore import Hit, VectorStore
+import json
 
 _SYSTEM_PROMPT = (
     "You are Finsight, an assistant that answers questions about the user's "
@@ -177,6 +178,40 @@ def _mmr(hits: list[Hit], k: int, lam: float) -> list[Hit]:
         selected.append(best_i)
         remaining.remove(best_i)
     return [hits[i] for i in selected]
+
+
+def social_reply(question: str) -> str | None:
+    text = question.casefold().strip()
+    text = text.strip(" \t\r\n!?.,:;。、？！")
+
+    if text in {
+        "hi", "hello", "hey",
+        "chào", "xin chào", "chào bạn"
+    }:
+        return (
+            "Xin chào! Mình là FinAI, trợ lý phân tích "
+            "báo cáo tài chính. Bạn có thể tải tài liệu "
+            "lên và hỏi mình về doanh thu, lợi nhuận, "
+            "các chỉ số tài chính hoặc xu hướng kinh doanh."
+        )
+
+    if text in {"cảm ơn", "thanks", "thank you"}:
+        return "Rất vui được hỗ trợ bạn!"
+
+    if text in {"tạm biệt", "bye", "goodbye"}:
+        return "Tạm biệt! Hẹn gặp lại bạn."
+
+    if text in {
+        "bạn là ai", "bạn làm được gì",
+        "what can you do"
+    }:
+        return (
+            "Mình là FinAI. Mình có thể đọc báo cáo "
+            "tài chính, tìm kiếm số liệu, giải thích "
+            "các chỉ tiêu và trả lời kèm nguồn tài liệu."
+        )
+
+    return None
 
 
 class RAGPipeline:
@@ -330,6 +365,7 @@ class RAGPipeline:
         others = [h for h in hits if (h.doc_id, h.note_no) != key]
         return [note_hit, *others]
 
+    
     def answer(
         self,
         session_id: str,
@@ -337,6 +373,165 @@ class RAGPipeline:
         *,
         history: list[dict] | None = None,
     ) -> RAGAnswer:
+
+        # 1. Lấy lịch sử hội thoại gần nhất
+        recent = [
+            {
+                "role": turn["role"],
+                "content": str(turn["content"])
+            }
+            for turn in (history or [])[-12:]
+            if turn.get("role") in ("user", "assistant")
+            and turn.get("content")
+        ]
+
+        # 2. AI phân loại ý định và viết lại câu hỏi
+        router_prompt = (
+            "You are an intent router for FinAI, "
+            "a financial-document assistant. "
+            'Return ONLY valid JSON with fields '
+            '"mode" and "search_query". '
+            'Mode must be "chat" or "rag". '
+
+            "Use chat for greetings, thanks, small talk, "
+            "general knowledge, financial definitions, "
+            "and questions about this conversation. "
+
+            "Use rag for facts, figures, analysis or "
+            "comparisons that must come from uploaded "
+            "financial documents, including follow-ups. "
+
+            "For rag, rewrite the question into a "
+            "standalone search_query using relevant "
+            "history: company, metric, period, report type. "
+            "Never invent missing facts. "
+
+            "For chat, search_query must be empty. "
+            'Example: {"mode":"rag",'
+            '"search_query":"Doanh thu ABC năm 2022?"}'
+        )
+
+        router_input = json.dumps(
+            {
+                "recent_messages": recent,
+                "current_message": question
+            },
+            ensure_ascii=False
+        )
+
+        raw_route = self.llm.chat(
+            [
+                {"role": "system", "content": router_prompt},
+                {"role": "user", "content": router_input}
+            ],
+            temperature=0.0,
+            max_tokens=600
+        )
+
+        # 3. Đọc kết quả phân loại
+        try:
+            parsed = json.loads(
+                raw_route[
+                    raw_route.index("{"):
+                    raw_route.rindex("}") + 1
+                ]
+            )
+            mode = parsed.get("mode", "rag")
+            search_question = (
+                parsed.get("search_query") or question
+            )
+
+            if not isinstance(search_question, str):
+                search_question = question
+
+        except (ValueError, TypeError, AttributeError):
+            mode = "rag"
+            search_question = question
+
+        # 4. Nhánh trò chuyện tự nhiên
+        if mode == "chat":
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are FinAI, a friendly financial "
+                        "assistant. Talk naturally and use "
+                        "conversation history for context. "
+                        "You can explain financial concepts. "
+                        "Never invent company-specific figures "
+                        "or pretend to have read a document. "
+                        "Be helpful, concise, and reply in "
+                        "the user's language."
+                    )
+                },
+                *recent,
+                {"role": "user", "content": question}
+            ]
+
+            return RAGAnswer(
+                answer=self.llm.chat(
+                    messages,
+                    temperature=0.5,
+                    max_tokens=1200
+                ),
+                sources=[]
+            )
+
+        # 5. Nhánh RAG: dùng câu hỏi đã được viết lại
+        sources = self.retrieve(
+            session_id, search_question
+        )
+
+        if not sources:
+            return RAGAnswer(
+                answer=(
+                    "Mình chưa tìm thấy thông tin phù hợp "
+                    "trong tài liệu của cuộc hội thoại này. "
+                    "Bạn hãy tải tài liệu lên hoặc cung cấp "
+                    "thêm thông tin nhé."
+                ),
+                sources=[]
+            )
+
+        # 6. Xây dựng context kèm nguồn
+        context = "\n\n".join(
+            f"[{s.rank}] (source: {s.doc_name}"
+            + (
+                f", page {s.page}"
+                if s.page is not None else ""
+            )
+            + f")\n{s.text}"
+            for s in sources
+        )
+
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            *recent
+        ]
+
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Context:\n{context}\n\n"
+                f"Question: {search_question}\n"
+                f"Original user message: {question}"
+            )
+        })
+
+        answer = self.llm.chat(messages)
+
+        return RAGAnswer(
+            answer=answer,
+            sources=sources
+        )
+
+        reply = social_reply(question)
+
+        if reply is not None:
+            return RAGAnswer(
+                answer=reply,
+                sources=[]
+            )
         sources = self.retrieve(session_id, question)
         if not sources:
             return RAGAnswer(
