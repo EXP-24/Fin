@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from src.rag import VectorStore, chunk_markdown
 
 from ..config import Settings, get_settings
+from ..auth import current_guest_user_id
 from ..db import Database
 from ..deps import get_db, get_files, get_vectorstore
 from ..files import FileStore
@@ -103,16 +104,16 @@ router = APIRouter(prefix="/api/sessions/{sid}/documents", tags=["documents"])
 
 
 @router.get("", response_model=list[DocumentInfo])
-def list_documents(sid: str, db: Database = Depends(get_db)):
-    if not db.session_exists(sid):
+def list_documents(sid: str, db: Database = Depends(get_db), user_id: str = Depends(current_guest_user_id)):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return [DocumentInfo(**d) for d in db.list_documents(sid)]
 
 
 @router.get("/{doc_id}", response_model=DocumentInfo)
-def get_document(sid: str, doc_id: str, db: Database = Depends(get_db)):
+def get_document(sid: str, doc_id: str, db: Database = Depends(get_db), user_id: str = Depends(current_guest_user_id)):
     """Poll a single document's current status (processing → ready/failed)."""
-    if not db.session_exists(sid):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     doc = db.get_document(sid, doc_id)
     if doc is None:
@@ -126,10 +127,11 @@ def upload_document(
     file: UploadFile,
     background: BackgroundTasks,
     db: Database = Depends(get_db),
+    user_id: str = Depends(current_guest_user_id),
     files: FileStore = Depends(get_files),
     vectors: VectorStore = Depends(get_vectorstore),
 ):
-    if not db.session_exists(sid):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
     filename = Path(file.filename or "upload").name
@@ -260,10 +262,11 @@ def delete_document(
     sid: str,
     doc_id: str,
     db: Database = Depends(get_db),
+    user_id: str = Depends(current_guest_user_id),
     files: FileStore = Depends(get_files),
     vectors: VectorStore = Depends(get_vectorstore),
 ):
-    if not db.session_exists(sid):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     # Signal any in-flight indexing to stop *before* removing the row, so the
     # background task quits early and self-cleans instead of running to the end.

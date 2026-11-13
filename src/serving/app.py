@@ -11,6 +11,7 @@ import time
 
 from .config import get_settings
 from .deps import get_db, get_embedder, get_memory, get_vectorstore
+from . import auth
 from .routes import chat, documents, sessions
 
 # Surface application logs (per-phase indexing timing, warm-up, cancellations)
@@ -36,6 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(documents.router)
 app.include_router(chat.router)

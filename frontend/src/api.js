@@ -2,9 +2,37 @@
 // proxied to FastAPI by Vite in development (see vite.config.js).
 
 const BASE = "/api";
+let guestBootstrap = null;
+
+// One bootstrap for all concurrent requests in this browser tab.
+async function ensureGuest() {
+  if (!guestBootstrap) {
+    guestBootstrap = fetch(`${BASE}/auth/guest`, {
+      method: "POST",
+      credentials: "same-origin",
+    }).then(async (res) => {
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.detail || "Guest initialization failed");
+      return result;
+    }).catch((error) => {
+      guestBootstrap = null;  // permit retry on next action
+      throw error;
+    });
+  }
+  return guestBootstrap;
+}
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, options);
+  const guest = path === "/health" ? null : await ensureGuest();
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (guest && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-FinAI-CSRF", guest.csrf_token);
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    ...options, headers, credentials: "same-origin",
+  });
+  if (res.status === 401) guestBootstrap = null;
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

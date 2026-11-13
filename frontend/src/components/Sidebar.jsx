@@ -111,16 +111,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        <Link
-          to="/comparisons"
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-            location.pathname === "/comparisons"
-              ? "bg-surface-container-high text-on-surface font-semibold"
-              : "text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-          }`}
-        >
-          <span className="material-symbols-outlined">compare_arrows</span>{t("Comparisons")}
-        </Link>
         {deleteError && <p role="alert" className="px-3 py-2 text-xs text-error">{deleteError}</p>}
       </nav>
 

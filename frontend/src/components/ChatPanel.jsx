@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useLanguage } from "../i18n.jsx";
 
-export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadClick, documentCount = 0 }) {
+export default function ChatPanel({ sessionId, ready, initialPrompt, draftPrompt = "", onUploadClick, documentCount = 0, hasPendingDocuments = false }) {
   const { t } = useLanguage();
   const [messages, setMessages] = useState([]);
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(() => draftPrompt);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const scrollRef = useRef(null);
@@ -13,6 +13,7 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
   // Initialize with initialPrompt if provided
   
   const submittingRef = useRef(false);
+  const documentsNotReady = documentCount > 0 && (!ready || hasPendingDocuments);
 
   useEffect(() => {
     let active = true;
@@ -57,6 +58,10 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
 
   async function handleSendPrompt(q) {
     if (!q || submittingRef.current) return;
+    if (documentsNotReady) {
+      setError("Tài liệu đang được xử lý. Vui lòng chờ đến khi các tài liệu hiển thị ‘Sẵn sàng’ rồi gửi câu hỏi.");
+      return;
+    }
     submittingRef.current = true;
     setError("");
     setQuestion("");
@@ -116,6 +121,11 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
         </div>
       )}
 
+      {documentsNotReady && (
+        <p role="status" className="text-center text-sm text-on-surface-variant">
+          Tài liệu đang được lập chỉ mục. Bạn có thể chỉnh sửa câu hỏi và gửi khi xử lý xong.
+        </p>
+      )}
       {error && <p className="text-error text-center font-body-sm bg-error-container/20 p-2 rounded-lg">{error}</p>}
 
       {/* Input Area: Fixed to Bottom */}
@@ -145,7 +155,7 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
                 </button>
                 <input 
                   className="flex-1 bg-transparent border-none outline-none px-4 font-body-lg text-body-lg text-on-surface placeholder:text-outline" 
-                  placeholder={ready ? t("Ask about your documents...") : t("Upload a document to begin...")}
+                  placeholder={documentsNotReady ? "Đang xử lý tài liệu..." : ready ? t("Ask about your documents...") : t("Upload a document to begin...")}
                   type="text"
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
@@ -154,7 +164,7 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, onUploadCli
                 <button 
                   className={`flex items-center justify-center w-10 h-10 rounded-full bg-primary text-on-primary hover:bg-on-background transition-transform active:scale-95 ${sending || !question.trim() ? 'opacity-50' : ''}`}
                   type="submit"
-                  disabled={sending || !question.trim()}
+                  disabled={sending || documentsNotReady || !question.trim()}
                 >
                   {sending ? (
                     <span className="material-symbols-outlined animate-spin">refresh</span>

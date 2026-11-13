@@ -48,10 +48,31 @@ class Base(DeclarativeBase):
     pass
 
 
+class UserRow(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="guest")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuthSessionRow(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class SessionRow(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    owner_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -125,11 +146,49 @@ class Database:
                 "ALTER TABLE documents "
                 "ADD COLUMN IF NOT EXISTS progress INTEGER NOT NULL DEFAULT 0"
             )
+            # Legacy sessions stay unowned (NULL); NEVER assign them to the first guest.
+            conn.exec_driver_sql(
+                "ALTER TABLE sessions "
+                "ADD COLUMN IF NOT EXISTS owner_user_id VARCHAR(32) "
+                "REFERENCES users(id)"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_sessions_owner_user_id "
+                "ON sessions (owner_user_id)"
+            )
+
+    # ------------------------------------------------------------- guest identities
+    def create_guest(self, token_hash: str, expires_at: datetime) -> str:
+        with self._Session.begin() as s:
+            user = UserRow(status="guest")
+            s.add(user)
+            s.flush()
+            s.add(AuthSessionRow(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+            return user.id
+
+    def resolve_guest(self, token_hash: str) -> str | None:
+        with self._Session() as s:
+            return s.scalar(
+                select(AuthSessionRow.user_id).join(UserRow).where(
+                    AuthSessionRow.token_hash == token_hash,
+                    AuthSessionRow.expires_at > _now(),
+                    UserRow.status == "guest",
+                )
+            )
+
+    def session_belongs_to(self, sid: str, user_id: str) -> bool:
+        with self._Session() as s:
+            return s.scalar(
+                select(SessionRow.id).where(
+                    SessionRow.id == sid,
+                    SessionRow.owner_user_id == user_id,
+                )
+            ) is not None
 
     # ------------------------------------------------------------- sessions
-    def create_session(self, name: str, description: str = "") -> dict:
+    def create_session(self, name: str, description: str, owner_user_id: str) -> dict:
         with self._Session.begin() as s:
-            row = SessionRow(name=name.strip(), description=description.strip())
+            row = SessionRow(name=name.strip(), description=description.strip(), owner_user_id=owner_user_id)
             s.add(row)
             s.flush()
             return {"id": row.id}
@@ -145,9 +204,9 @@ class Database:
                 return None
             return self._summary(s, row)
 
-    def list_summaries(self) -> list[dict]:
+    def list_summaries(self, owner_user_id: str) -> list[dict]:
         with self._Session() as s:
-            rows = s.scalars(select(SessionRow).order_by(SessionRow.created_at.desc()))
+            rows = s.scalars(select(SessionRow).where(SessionRow.owner_user_id == owner_user_id).order_by(SessionRow.created_at.desc()))
             return [self._summary(s, r) for r in rows]
 
     def _summary(self, s: Session, row: SessionRow) -> dict:
@@ -170,10 +229,10 @@ class Database:
             "chunk_count": int(chunk_sum or 0),
         }
 
-    def delete_session(self, sid: str) -> bool:
+    def delete_session(self, sid: str, owner_user_id: str) -> bool:
         with self._Session.begin() as s:
             row = s.get(SessionRow, sid)
-            if row is None:
+            if row is None or row.owner_user_id != owner_user_id:
                 return False
             s.delete(row)
             return True

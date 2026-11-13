@@ -14,6 +14,7 @@ export default function SessionPage() {
 
   // We extract the initial prompt passed from the HomePage (if any)
   const initialPrompt = location.state?.initialPrompt || "";
+const draftPrompt = location.state?.draftPrompt || "";
 
   const uploadInputRef = useRef(null);
 
@@ -44,6 +45,9 @@ export default function SessionPage() {
   }
 
   const ready = documents.some((d) => d.status === "ready");
+  const hasPendingDocuments = documents.some((d) =>
+    ["processing", "pending", "queued", "indexing"].includes(d.status)
+  );
 
   return (
     <div className="flex flex-col w-full max-w-chat-max-width mx-auto px-margin-mobile md:px-0 pb-32">
@@ -63,8 +67,10 @@ export default function SessionPage() {
         />
         <ChatPanel 
           sessionId={sessionId} 
-          ready={ready} 
+          ready={ready}
+          hasPendingDocuments={hasPendingDocuments} 
           initialPrompt={initialPrompt}
+draftPrompt={draftPrompt}
           onUploadClick={() => uploadInputRef.current?.click()}
           documentCount={documents.length}
         />

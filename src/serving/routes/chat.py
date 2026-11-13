@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.rag import RAGPipeline
 from src.rag.llm import LLMError
 
+from ..auth import current_guest_user_id
 from ..db import Database
 from ..deps import get_db, get_memory, get_pipeline
 from ..memory import ShortTermMemory
@@ -22,8 +23,8 @@ router = APIRouter(prefix="/api/sessions/{sid}/chat", tags=["chat"])
 
 
 @router.get("", response_model=list[ChatMessage])
-def get_history(sid: str, db: Database = Depends(get_db)):
-    if not db.session_exists(sid):
+def get_history(sid: str, db: Database = Depends(get_db), user_id: str = Depends(current_guest_user_id)):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return [ChatMessage(**m) for m in db.list_chat(sid)]
 
@@ -35,8 +36,9 @@ def ask(
     db: Database = Depends(get_db),
     pipeline: RAGPipeline = Depends(get_pipeline),
     memory: ShortTermMemory = Depends(get_memory),
+    user_id: str = Depends(current_guest_user_id),
 ):
-    if not db.session_exists(sid):
+    if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
     # recent turns from the cache; if empty, prime it from durable history
