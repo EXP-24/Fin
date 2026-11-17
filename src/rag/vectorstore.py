@@ -231,6 +231,7 @@ class VectorStore:
         statement_type: str = "",
         note_no: int | None = None,
         year: int | None = None,
+        untyped: bool = False,
     ) -> list[Hit]:
         """Hybrid search, optionally soft-filtered to a financial statement /
         note / year (query routing). The caller decides the fallback when a
@@ -247,6 +248,12 @@ class VectorStore:
                 models.FieldCondition(
                     key="statement_type", match=models.MatchValue(value=statement_type)
                 )
+            )
+        if untyped:
+            # Chunks without statement metadata (e.g. PDFs: no Markdown headings to
+            # classify) can never match a statement filter.
+            must.append(
+                models.FieldCondition(key="statement_type", match=models.MatchValue(value=""))
             )
         if note_no is not None:
             must.append(
@@ -297,6 +304,27 @@ class VectorStore:
             )
 
         return self._to_hits(response.points)
+
+    def fetch_page_head(self, session_id: str, doc_id: str, page: int) -> Hit | None:
+        """First chunk of a page: for a statement that spills over several chunks it holds
+        the title and the column headers ("Quý IV", "Lũy kế", "31/12/2025") that the
+        later chunks of the same page lack."""
+        flt = models.Filter(
+            must=[
+                models.FieldCondition(key="session_id", match=models.MatchValue(value=session_id)),
+                models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_id)),
+                models.FieldCondition(key="page", match=models.MatchValue(value=page)),
+            ]
+        )
+        points, _ = self.client.scroll(
+            self.collection, scroll_filter=flt, with_payload=True, with_vectors=False, limit=50
+        )
+        if not points:
+            return None
+        first = min(points, key=lambda p: (p.payload or {}).get("ordinal", 0))
+        from types import SimpleNamespace  # scroll() records carry no score
+
+        return self._to_hits([SimpleNamespace(payload=first.payload, vector=None, score=0.0)])[0]
 
     def fetch_note(
         self, session_id: str, doc_id: str, note_no: int, *, max_chars: int = 12000

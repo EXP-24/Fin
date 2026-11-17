@@ -28,6 +28,7 @@ from .financial_sections import route_query
 from .llm import GroqClient
 from .reranker import Reranker
 from .vectorstore import Hit, VectorStore
+import dataclasses
 import json
 import os
 import re
@@ -145,6 +146,86 @@ def _chat_in_language(llm, messages: list[dict], question: str, **kwargs) -> str
         return ("Mình chưa tìm thấy thông tin này trong tài liệu." if _reply_language(question) == "Vietnamese"
                 else "I could not find this information in the documents.")
     return answer
+
+
+# --- ratio questions: retrieve each component line item -------------------------
+# "Tính ROE của hai công ty" embeds close to *notes about equity*, not to the income
+# statement that holds the net profit, and the balance sheet / income statement of the
+# second company can be crowded out. For named ratios we therefore also search each
+# component line item on its own and keep the best chunk of EVERY document for it.
+_RATIO_COMPONENTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("roe", "ty suat loi nhuan tren von chu so huu"), ("lợi nhuận sau thuế", "vốn chủ sở hữu")),
+    (("roa", "ty suat loi nhuan tren tong tai san"), ("lợi nhuận sau thuế", "tổng tài sản")),
+    (("bien loi nhuan gop", "gross margin"), ("lợi nhuận gộp", "doanh thu thuần")),
+    (("bien loi nhuan rong", "bien loi nhuan sau thue", "net margin"), ("lợi nhuận sau thuế", "doanh thu thuần")),
+    (("don bay", "he so no", "ty le no tren von", "no tren von chu"), ("nợ phải trả", "vốn chủ sở hữu")),
+    (("thanh toan hien hanh", "current ratio"), ("tài sản ngắn hạn", "nợ ngắn hạn")),
+    (("thanh toan nhanh", "quick ratio"), ("tài sản ngắn hạn", "hàng tồn kho", "nợ ngắn hạn")),
+    (("cir", "chi phi tren thu nhap"), ("chi phí hoạt động", "tổng thu nhập hoạt động")),
+    (("ldr", "cho vay tren tien gui"), ("cho vay khách hàng", "tiền gửi của khách hàng")),
+)
+
+
+def _ratio_components(question: str) -> tuple[str, ...]:
+    """Line items a named ratio in the question is computed from ('' if none)."""
+    q = _fold(question)
+    for triggers, parts in _RATIO_COMPONENTS:
+        if any(re.search("(?<![a-z0-9])" + re.escape(t) + "(?![a-z0-9])", q) for t in triggers):
+            return parts
+    return ()
+
+
+def _ratio_hint(question: str) -> str:
+    """Extra instruction for named-ratio questions: models tend to grab the first number
+    column (a single quarter) and the 'total sources of capital' line instead of equity."""
+    parts = _ratio_components(question)
+    if not parts:
+        return ""
+    return (
+        "\nRatio question (" + " / ".join(parts) + "): use the FULL-YEAR (cumulative / "
+        "'lũy kế' / 'Năm nay') column for income-statement items, never a single-quarter "
+        "column; use the end-of-period balance for balance-sheet items. 'Vốn chủ sở hữu' "
+        "means the line 'VỐN CHỦ SỞ HỮU' / 'TỔNG VỐN CHỦ SỞ HỮU', NOT 'Tổng cộng nguồn vốn' "
+        "or 'Tổng nợ phải trả và vốn chủ sở hữu' (in VAS balance sheets equity is code 400; "
+        "codes 270/440 are the totals of assets/capital and are NOT equity). A statement with "
+        "'Quý IV' and 'Lũy kế' columns lists FOUR amounts per row: [this quarter, same "
+        "quarter last year, year-to-date this year, year-to-date last year] - the full-year "
+        "figure of the current year is the THIRD amount. Work out each company/document "
+        "separately, show each input with its source number, then compare."
+    )
+
+
+# OCR'd PDF text layers sometimes break the last digit off an amount: "25.954.47 2",
+# "6.979.82 6", "(2.136.12 0)". Vietnamese amounts group digits by 3, so a group of exactly
+# two digits followed by one lone digit is such a split. Rejoin before the LLM reads it,
+# otherwise it skips the broken (often the year-to-date) figure and quotes another column.
+_SPLIT_AMOUNT_RE = re.compile("(?<![0-9.])([0-9]{1,3}(?:[.][0-9]{3})*[.][0-9]{2}) ([0-9])(?![0-9.])")
+
+
+def _repair_numbers(text: str) -> str:
+    return _SPLIT_AMOUNT_RE.sub(lambda m: m.group(1) + m.group(2), text)
+
+
+_NUM_RE = re.compile("[0-9]{1,3}(?:[.][0-9]{3})+")  # grouped amounts only (not years)
+
+
+def _row_score(text: str, item: str) -> int:
+    """How strongly `text` holds `item` as a table row: the label followed by an amount.
+
+    PDF text layers put the label and its numbers on separate lines, so the amount may
+    be up to 3 lines below the label. A label at the start of a line (optionally after
+    "tổng") counts double: it is the row itself, not a sentence that mentions it."""
+    term = _fold(item)
+    lines = [_fold(x) for x in text.split("\n")]
+    raw = text.split("\n")
+    score = 0
+    for i, f in enumerate(lines):
+        if term not in f:
+            continue
+        if any(_NUM_RE.search(raw[j]) for j in range(i, min(i + 4, len(raw)))):
+            f = f.strip()
+            score += 2 if (f.startswith(term) or f.startswith("tong " + term)) else 1
+    return score
 
 
 _SYSTEM_PROMPT = (
@@ -439,7 +520,27 @@ class RAGPipeline:
             # Keep the routed (statement-filtered) hits first, but also let the
             # unfiltered search contribute so explanatory notes are not hidden.
             hits = _merge_hits(hits, self.vectorstore.search(session_id, question, limit=n))
+        elif r.statement_type:
+            # Documents whose chunks carry no statement type (PDFs) are invisible to the
+            # statement filter. In a session mixing them with typed documents they would
+            # never be retrieved, so always add their best hits after the routed ones.
+            hits = _merge_hits(
+                hits, self.vectorstore.search(session_id, question, limit=n, untyped=True)
+            )
         return hits
+
+    def _with_page_head(self, session_id: str, hit: Hit) -> Hit | None:
+        """Title + column headers of the page `hit` sits on (None when `hit` is the first
+        chunk itself or there is no page). Trimmed to keep the context budget."""
+        if hit.page is None or not hit.doc_id:
+            return None
+        try:
+            head = self.vectorstore.fetch_page_head(session_id, hit.doc_id, hit.page)
+        except Exception:  # noqa: BLE001 - an optional enrichment must never break retrieval
+            return None
+        if head is None or head.ordinal >= hit.ordinal:
+            return None
+        return dataclasses.replace(head, text=head.text[:700])
 
     def _periods(self, question: str) -> list[int]:
         if not self.use_graph:
@@ -479,6 +580,37 @@ class RAGPipeline:
             ranked = ranked[: self.top_k]
         else:
             ranked = _mmr(hits, self.top_k, self.mmr_lambda)
+
+        components = _ratio_components(question)
+        if components:
+            # Best chunk of every document for each component line item, placed FIRST so
+            # the context budget can never drop them in favour of long generic notes.
+            extra: list[Hit] = []
+            for part in components:
+                by_doc: dict[str, list[Hit]] = {}
+                for h in _collapse_parents(self._routed_search(session_id, part)):
+                    by_doc.setdefault(h.doc_id, []).append(h)
+                for doc_hits in by_doc.values():
+                    # Prefer the chunk holding the line item as a table row with numbers
+                    # over prose mentioning it (PDF chunks carry no statement metadata).
+                    # Two per document: a row can straddle a chunk boundary (label at the
+                    # end of one chunk, amounts at the start of the next). sorted() is
+                    # stable, so ties keep the retrieval order.
+                    best = sorted(doc_hits, key=lambda h: -_row_score(h.text, part))[:2]
+                    for h in best:
+                        if _row_score(h.text, part) > 0 or h is best[0]:
+                            head = self._with_page_head(session_id, h)
+                            if head is not None:
+                                extra.append(head)
+                            extra.append(h)
+            seen_text: set[tuple[str, str]] = set()
+            merged: list[Hit] = []
+            for h in [*extra, *ranked]:  # same chunk can come from several searches
+                key = (h.doc_id, h.text[:200])
+                if key not in seen_text:
+                    seen_text.add(key)
+                    merged.append(h)
+            ranked = merged
 
         if self.use_whole_note and not multi:
             ranked = self._expand_note(session_id, ranked)
@@ -676,6 +808,7 @@ class RAGPipeline:
 
         # 6. Xây dựng context kèm nguồn
         sources = _fit_sources(sources, _CONTEXT_CHARS)
+        sources = [dataclasses.replace(s, text=_repair_numbers(s.text)) for s in sources]
         context = "\n\n".join(
             f"[{s.rank}] (source: {s.doc_name}"
             + (
@@ -697,11 +830,12 @@ class RAGPipeline:
                 f"Context:\n{context}\n\n"
                 f"Question: {search_question}\n"
                 f"Original user message: {question}\n"
-                f"{_language_directive(question)}"
+                f"{_language_directive(question)}{_ratio_hint(question)}"
             )
         })
 
-        answer = _chat_in_language(self.llm, messages, question, max_tokens=2200)
+        extra_kwargs = {"reasoning_effort": "medium"} if _ratio_components(question) else {}
+        answer = _chat_in_language(self.llm, messages, question, max_tokens=2200, **extra_kwargs)
 
         return RAGAnswer(
             answer=answer,

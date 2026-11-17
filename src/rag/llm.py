@@ -44,8 +44,11 @@ class GroqClient:
         *,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> str:
-        """Send a chat request and return the assistant's text reply."""
+        """Send a chat request and return the assistant's text reply.
+
+        `reasoning_effort` (gpt-oss only) overrides GROQ_REASONING_EFFORT for this call."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -61,7 +64,7 @@ class GroqClient:
         # gets cut off (finish_reason == "length"). Override with
         # GROQ_REASONING_EFFORT=low|medium|high.
         if "gpt-oss" in self.model:
-            body["reasoning_effort"] = os.getenv("GROQ_REASONING_EFFORT", "low")
+            body["reasoning_effort"] = reasoning_effort or os.getenv("GROQ_REASONING_EFFORT", "low")
         # Groq's free tier has a tokens-per-minute cap; a 429 usually clears in a
         # few seconds, so wait (bounded) and retry before surfacing an error.
         for attempt in range(3):
