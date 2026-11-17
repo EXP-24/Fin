@@ -4,6 +4,7 @@ Set FINSIGHT_AUTH_TEST_DATABASE_URL to opt in to the integration tests.
 """
 import os
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -13,7 +14,8 @@ from sqlalchemy.engine import make_url
 
 from src.serving.auth import COOKIE_NAME, hash_password, verify_password
 from src.serving.db import Database, UserRow
-from src.serving.deps import get_db
+from src.serving.deps import get_db, get_files, get_memory, get_pipeline, get_vectorstore
+from src.serving.files import FileStore
 from src.serving import auth
 from src.serving.routes import chat, documents, sessions
 
@@ -29,7 +31,7 @@ def test_passwords_are_salted_and_verified():
 
 
 @pytest.fixture
-def auth_app():
+def auth_app(tmp_path):
     url = os.getenv("FINSIGHT_AUTH_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Set FINSIGHT_AUTH_TEST_DATABASE_URL for PostgreSQL integration tests")
@@ -46,6 +48,12 @@ def auth_app():
         for router in (auth.router, sessions.router, documents.router, chat.router):
             app.include_router(router)
         app.dependency_overrides[get_db] = lambda: db
+        # These routes resolve their heavy dependencies before checking ownership. Stub
+        # them so the tests need only PostgreSQL (no Qdrant/Redis, no model download).
+        app.dependency_overrides[get_vectorstore] = lambda: MagicMock()
+        app.dependency_overrides[get_pipeline] = lambda: MagicMock()
+        app.dependency_overrides[get_memory] = lambda: MagicMock()
+        app.dependency_overrides[get_files] = lambda: FileStore(tmp_path)
         with auth._lock:
             auth._attempts.clear()
         yield app, db
