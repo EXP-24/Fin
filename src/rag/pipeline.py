@@ -60,7 +60,7 @@ _DEFINITION_CUES = tuple(_fold(t) for t in (
     "là gì", "nghĩa là", "khái niệm", "định nghĩa", "công thức", "cách tính", "giải thích",
     "what is", "meaning of", "define", "how to calculate",
 ))
-_DOC_CUE_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])|31/12|q[1-4]|quy\s+(?:i{1,3}|iv|[1-4])|"
+_DOC_CUE_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])|31/12|\bq[1-4]\b|quy\s+(?:i{1,3}|iv|[1-4])\b|"
                          r"nam (?:nay|ngoai|truoc)|trong bao cao|tai lieu|cua (?:cong ty|ngan hang|doanh nghiep)")
 _NON_ANALYSIS = tuple(_fold(t) for t in (
     "làm thơ", "viết thơ", "bài thơ", "truyện", "joke", "viết code", "viết chương trình", "lập trình",
@@ -99,6 +99,54 @@ def _fit_sources(sources: list, budget: int) -> list:
             used += len(s.text)
     return kept or sources[:1]
 
+# --- reply-language guard -------------------------------------------------------
+# gpt-oss / Llama occasionally drift into Chinese (seen on "not in the documents"
+# answers). A soft "answer in the question's language" is not enough, so the language
+# is decided in code, stated explicitly in the user turn, and a stray CJK answer is
+# regenerated once.
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+_VI_CHARS_RE = re.compile(
+    "[ăâđêôơưàáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]", re.I
+)
+_EN_WORDS_RE = re.compile(
+    r"\b(what|which|who|when|where|why|how|is|are|was|were|the|of|and|compare|total|"
+    r"revenue|profit|growth|increase|decrease|between|does|did|show|tell)\b", re.I
+)
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text or ""))
+
+
+def _reply_language(question: str) -> str:
+    """'English' only for clearly English questions; everything else is Vietnamese
+    (this is a Vietnamese financial-reporting app, incl. unaccented Vietnamese)."""
+    if _VI_CHARS_RE.search(question) or _has_cjk(question):
+        return "Vietnamese"
+    return "English" if _EN_WORDS_RE.search(question) else "Vietnamese"
+
+
+def _language_directive(question: str) -> str:
+    lang = _reply_language(question)
+    vi = " (tiếng Việt)" if lang == "Vietnamese" else ""
+    return f"Reply language: {lang}{vi}. Do not use Chinese, Japanese or Korean."
+
+
+def _chat_in_language(llm, messages: list[dict], question: str, **kwargs) -> str:
+    """llm.chat, but never return CJK text to a user who did not write CJK: regenerate once
+    with a firmer instruction, then fall back to a short message in the right language."""
+    answer = llm.chat(messages, **kwargs)
+    if not _has_cjk(answer) or _has_cjk(question):
+        return answer
+    retry = [*messages, {"role": "system", "content": _language_directive(question)
+                         + " Your previous reply used the wrong language; answer again."}]
+    answer = llm.chat(retry, **kwargs)
+    if _has_cjk(answer):
+        return ("Mình chưa tìm thấy thông tin này trong tài liệu." if _reply_language(question) == "Vietnamese"
+                else "I could not find this information in the documents.")
+    return answer
+
+
 _SYSTEM_PROMPT = (
     "You are FinAI, a specialist in financial statements and financial analysis. "
     "Only answer finance, accounting, and business financial performance questions. "
@@ -126,8 +174,10 @@ _SYSTEM_PROMPT = (
     "'140.000 + 260.000 - 100.000 = 300.000 triệu đồng'. NEVER use LaTeX or math "
     "markup (no \\text, \\frac, \\times, $...$, \\[ \\] or \\( \\)).\n"
     "Cite the sources you used with their bracket numbers, e.g. [1]. Keep answers "
-    "concise and factual, report numbers exactly as they appear, and answer in "
-    "the language of the question."
+    "concise and factual, report numbers exactly as they appear.\n"
+    "LANGUAGE: reply in the language of the user's question (Vietnamese question -> "
+    "Vietnamese answer, English question -> English answer). NEVER reply in Chinese, "
+    "Japanese or Korean, even when saying the answer is not in the documents."
 )
 
 _MAX_PARENT_CHARS = 4000  # cap an expanded table so it can't dominate the context
@@ -602,7 +652,7 @@ class RAGPipeline:
                 {"role": "user", "content": question},
             ]
             return RAGAnswer(
-                answer=self.llm.chat(messages, temperature=0.2, max_tokens=900),
+                answer=_chat_in_language(self.llm, messages, question, temperature=0.2, max_tokens=900),
                 sources=[],
             )
 
@@ -646,11 +696,12 @@ class RAGPipeline:
             "content": (
                 f"Context:\n{context}\n\n"
                 f"Question: {search_question}\n"
-                f"Original user message: {question}"
+                f"Original user message: {question}\n"
+                f"{_language_directive(question)}"
             )
         })
 
-        answer = self.llm.chat(messages, max_tokens=2200)
+        answer = _chat_in_language(self.llm, messages, question, max_tokens=2200)
 
         return RAGAnswer(
             answer=answer,
