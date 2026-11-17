@@ -239,3 +239,21 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   .font-display-lg { font-size: 32px; line-height: 1.25; }
   .answer-markdown { font-size: 14px; }
 }
+
+/* Collapsible sidebar: <html data-sidebar="collapsed"> is set by src/sidebar.js. Specificity
+   beats the responsive width rules above, so the page, header and the fixed input bars
+   (`left-sidebar-width`) all stretch to the full width. */
+aside.sidebar-panel { transition: transform 0.25s ease; }
+.layout-shift { transition: padding-left 0.25s ease; }
+header.fixed { transition: left 0.25s ease; }
+html[data-sidebar="collapsed"] aside.sidebar-panel {
+  transform: translateX(-100%);
+  visibility: hidden; /* also takes the hidden links out of the tab order */
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
+}
+html[data-sidebar="collapsed"] .pl-sidebar-width { padding-left: 0; }
+html[data-sidebar="collapsed"] .left-sidebar-width { left: 0; }
+html[data-sidebar="collapsed"] header.fixed { left: 0; }
+@media (prefers-reduced-motion: reduce) {
+  aside.sidebar-panel, .layout-shift, header.fixed { transition: none !important; }
+}

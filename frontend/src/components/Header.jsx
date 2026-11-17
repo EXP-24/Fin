@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "../i18n.jsx";
 import { useAuth } from "../auth.jsx";
 import { getTheme, resolveTheme, setTheme } from "../theme.js";
+import { useSidebarCollapsed } from "../sidebar.js";
+import SidebarToggle from "./SidebarToggle.jsx";
 
 function pageTitle(pathname, tr) {
   if (pathname.startsWith("/sessions/")) return tr("Phân tích AI", "AI Analysis");
@@ -19,6 +21,7 @@ export default function Header() {
   const isMember = user?.status === "member";
   const [error, setError] = useState("");
   const [theme, setThemeState] = useState(() => resolveTheme());
+  const sidebarCollapsed = useSidebarCollapsed();
 
   useEffect(() => {
     const sync = () => setThemeState(resolveTheme(getTheme()));
@@ -35,11 +38,16 @@ export default function Header() {
 
   return (
     <header className="fixed top-0 right-0 left-sidebar-width h-16 bg-background/60 backdrop-blur-xl border-b border-outline-variant/40 z-40 flex items-center justify-between px-margin-desktop">
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-on-surface-variant min-w-0">
-        <span>{tr("Nền tảng", "Platform")}</span>
-        <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-        <span className="text-on-surface font-semibold truncate">{pageTitle(pathname, tr)}</span>
-      </nav>
+      <div className="flex items-center gap-2 min-w-0">
+        {/* Shown when the sidebar is hidden (the sidebar carries its own toggle otherwise);
+            on phones the sidebar is an icon rail, so the toggle always lives here. */}
+        <SidebarToggle className={sidebarCollapsed ? "-ml-2" : "md:hidden -ml-2"} />
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-on-surface-variant min-w-0">
+          <span>{tr("Nền tảng", "Platform")}</span>
+          <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+          <span className="text-on-surface font-semibold truncate">{pageTitle(pathname, tr)}</span>
+        </nav>
+      </div>
 
       <div className="flex items-center gap-2">
         <button

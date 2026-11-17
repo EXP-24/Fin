@@ -4,6 +4,7 @@ import { api } from "../api.js";
 import { useLanguage } from "../i18n.jsx";
 import { useAuth } from "../auth.jsx";
 import Logo from "./Logo.jsx";
+import SidebarToggle from "./SidebarToggle.jsx";
 import { useConfirm } from "./ConfirmDialog.jsx";
 import { useToast } from "./Toast.jsx";
 
@@ -68,19 +69,22 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-sidebar-width bg-surface-container-low border-r border-outline-variant/40 flex flex-col z-50">
-      <button
-        type="button"
-        onClick={() => navigate("/")}
-        aria-label="FinSight"
-        className="px-5 h-16 flex items-center gap-3 shrink-0 text-left max-md:justify-center max-md:px-0"
-      >
-        <Logo size={34} className="orbit-float shrink-0" />
-        <span className="leading-tight max-md:hidden">
-          <span className="block text-lg font-bold tracking-tight text-gradient">FinSight</span>
-          <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">AI Platform</span>
-        </span>
-      </button>
+    <aside className="sidebar-panel fixed left-0 top-0 h-screen w-sidebar-width bg-surface-container-low border-r border-outline-variant/40 flex flex-col z-50">
+      <div className="h-16 flex items-center shrink-0 pr-3 max-md:pr-0">
+        <button
+          type="button"
+          onClick={() => navigate("/")}
+          aria-label="FinSight"
+          className="flex-1 min-w-0 px-5 h-16 flex items-center gap-3 text-left max-md:justify-center max-md:px-0"
+        >
+          <Logo size={34} className="orbit-float shrink-0" />
+          <span className="leading-tight max-md:hidden">
+            <span className="block text-lg font-bold tracking-tight text-gradient">FinSight</span>
+            <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">AI Platform</span>
+          </span>
+        </button>
+        <SidebarToggle className="max-md:hidden" />
+      </div>
 
       <div className="px-4 pb-3 max-md:px-2">
         <Link
