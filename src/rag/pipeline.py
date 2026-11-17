@@ -29,6 +29,75 @@ from .llm import GroqClient
 from .reranker import Reranker
 from .vectorstore import Hit, VectorStore
 import json
+import os
+import re
+import unicodedata
+
+
+def _fold(text: str) -> str:
+    """Lower-case and strip accents so matching works with or without diacritics."""
+    text = unicodedata.normalize("NFD", text.casefold().replace("đ", "d"))
+    return "".join(c for c in text if unicodedata.category(c) != "Mn")
+
+
+# Terms that, in a question, make it about report line items / metrics. Matching is
+# accent-insensitive and on whole words. The LLM intent router is not trusted to
+# reject these: it misrouted e.g. "Tổng tài sản ...?" as out-of-scope.
+_DATA_TERMS = tuple(_fold(t) for t in (
+    "báo cáo tài chính", "báo cáo kết quả", "báo cáo lưu chuyển", "bảng cân đối",
+    "cân đối kế toán", "kết quả hoạt động", "kết quả kinh doanh", "lưu chuyển tiền",
+    "dòng tiền", "thuyết minh", "tài sản", "nợ phải trả", "vốn chủ sở hữu", "vốn điều lệ",
+    "nguồn vốn", "doanh thu", "lợi nhuận", "thu nhập", "chi phí", "dự phòng", "nợ xấu",
+    "nợ nhóm", "thuế", "cổ tức", "cổ phiếu", "cổ đông", "lãi thuần", "lãi gộp", "lãi suất",
+    "cho vay", "tiền gửi", "tín dụng", "huy động", "phát hành", "giấy tờ có giá", "trái phiếu",
+    "chứng khoán", "ngoại hối", "ngoại tệ", "công ty con", "công ty liên kết", "tổng cộng",
+    "biên lợi nhuận", "khấu hao", "nhân viên", "roe", "roa", "nim", "cir", "eps", "ebitda",
+    "revenue", "profit", "net income", "total assets", "liabilities", "equity", "cash flow",
+    "balance sheet", "income statement", "gross margin",
+))
+_DATA_RE = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(t) for t in _DATA_TERMS) + r")(?![a-z0-9])")
+_DEFINITION_CUES = tuple(_fold(t) for t in (
+    "là gì", "nghĩa là", "khái niệm", "định nghĩa", "công thức", "cách tính", "giải thích",
+    "what is", "meaning of", "define", "how to calculate",
+))
+_DOC_CUE_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])|31/12|q[1-4]|quy\s+(?:i{1,3}|iv|[1-4])|"
+                         r"nam (?:nay|ngoai|truoc)|trong bao cao|tai lieu|cua (?:cong ty|ngan hang|doanh nghiep)")
+_NON_ANALYSIS = tuple(_fold(t) for t in (
+    "làm thơ", "viết thơ", "bài thơ", "truyện", "joke", "viết code", "viết chương trình", "lập trình",
+))
+
+
+def _is_data_question(question: str) -> bool:
+    """True when the question asks for facts/figures that live in the uploaded reports."""
+    q = _fold(question)
+    if any(x in q for x in _NON_ANALYSIS) or not _DATA_RE.search(q):
+        return False
+    if any(c in q for c in _DEFINITION_CUES) and not _DOC_CUE_RE.search(q):
+        return False  # a general "what is ROE?" question: let the router answer it
+    return True
+
+
+def _clip_history(messages: list[dict], keep: int, chars: int) -> list[dict]:
+    """Last `keep` turns, each cut to `chars` characters: long old answers dominate the prompt."""
+    return [
+        {"role": m["role"], "content": m["content"] if len(m["content"]) <= chars else m["content"][:chars] + "…"}
+        for m in messages[-keep:]
+    ]
+
+
+# Groq's free tier allows 8000 tokens/minute *including* the reserved completion budget,
+# so the amount of retrieved text per question is capped (raise it on a paid tier).
+_CONTEXT_CHARS = int(os.getenv("FINSIGHT_CONTEXT_CHARS", "9000"))
+
+
+def _fit_sources(sources: list, budget: int) -> list:
+    """Keep ranked sources while they fit the budget; always keep the best one (clipped)."""
+    kept, used = [], 0
+    for s in sources:
+        if used + len(s.text) <= budget:
+            kept.append(s)
+            used += len(s.text)
+    return kept or sources[:1]
 
 _SYSTEM_PROMPT = (
     "You are FinAI, a specialist in financial statements and financial analysis. "
@@ -53,6 +122,9 @@ _SYSTEM_PROMPT = (
     "vụ, số phát sinh — the 'Năm nay/Năm trước' tables) from outstanding BALANCES "
     "at a point in time (số dư, 'Số cuối năm/Số đầu năm'). Answer the kind the "
     "question asks about and do not mix the two.\n"
+    "Write every formula and calculation as plain text on one line, e.g. "
+    "'140.000 + 260.000 - 100.000 = 300.000 triệu đồng'. NEVER use LaTeX or math "
+    "markup (no \\text, \\frac, \\times, $...$, \\[ \\] or \\( \\)).\n"
     "Cite the sources you used with their bracket numbers, e.g. [1]. Keep answers "
     "concise and factual, report numbers exactly as they appear, and answer in "
     "the language of the question."
@@ -120,6 +192,33 @@ def _mmr_numpy(hits: list[Hit], k: int, lam: float):
         selected.append(best)
         remaining.remove(best)
     return [hits[i] for i in selected]
+
+
+# Questions asking *why* / for an explanation are answered by narrative text
+# (thuyết minh, management commentary) rather than by the statement table that
+# the line item lives in, so the statement filter must not hide that text.
+_EXPLAIN_HINTS = (
+    "tại sao", "vì sao", "lý do", "nguyên nhân", "giải thích", "do đâu", "do đâu mà",
+    "đúng không", "có phải", "phải không",
+    "why", "reason", "explain", "cause",
+)
+
+
+def _wants_explanation(question: str) -> bool:
+    q = (question or "").lower()
+    return any(h in q for h in _EXPLAIN_HINTS)
+
+
+def _merge_hits(primary: list[Hit], extra: list[Hit]) -> list[Hit]:
+    """primary first, then extra hits not already present (keyed by doc + chunk)."""
+    seen = {(h.doc_id, h.ordinal, h.parent_id, h.text[:80]) for h in primary}
+    merged = list(primary)
+    for h in extra:
+        key = (h.doc_id, h.ordinal, h.parent_id, h.text[:80])
+        if key not in seen:
+            seen.add(key)
+            merged.append(h)
+    return merged
 
 
 def _collapse_parents(hits: list[Hit]) -> list[Hit]:
@@ -250,7 +349,7 @@ class RAGPipeline:
         self.use_graph = use_graph
         self.known_years = known_years or []
 
-    def _routed_search(self, session_id: str, question: str) -> list[Hit]:
+    def _routed_search(self, session_id: str, question: str, *, explain: bool = False) -> list[Hit]:
         """Hybrid search, soft-filtered to the statement/note/year the question
         targets. Degrades gracefully: drop the year filter first, then all
         filters, so routing never blocks an answer that exists off-route."""
@@ -286,6 +385,10 @@ class RAGPipeline:
             )
         if not hits:
             hits = self.vectorstore.search(session_id, question, limit=n)
+        elif explain or _wants_explanation(question):
+            # Keep the routed (statement-filtered) hits first, but also let the
+            # unfiltered search contribute so explanatory notes are not hidden.
+            hits = _merge_hits(hits, self.vectorstore.search(session_id, question, limit=n))
         return hits
 
     def _periods(self, question: str) -> list[int]:
@@ -295,8 +398,10 @@ class RAGPipeline:
 
         return detect_periods(question, self.known_years)
 
-    def retrieve(self, session_id: str, question: str) -> list[RetrievedChunk]:
-        hits = self._routed_search(session_id, question)
+    def retrieve(
+        self, session_id: str, question: str, *, explain: bool = False
+    ) -> list[RetrievedChunk]:
+        hits = self._routed_search(session_id, question, explain=explain)
         if not hits:
             return []
 
@@ -388,6 +493,9 @@ class RAGPipeline:
             and turn.get("content")
         ]
 
+        router_recent = _clip_history(recent, 6, 300)
+        answer_recent = _clip_history(recent, 4, 700)
+
         # 2. AI phân loại ý định và viết lại câu hỏi
         router_prompt = (
             "You are FinAI's financial-scope intent router. "
@@ -411,19 +519,21 @@ class RAGPipeline:
 
         router_input = json.dumps(
             {
-                "recent_messages": recent,
+                "recent_messages": router_recent,
                 "current_message": question
             },
             ensure_ascii=False
         )
 
-        raw_route = self.llm.chat(
+        # A self-contained question about report figures with no history needs neither
+        # intent routing nor rewriting: skip that LLM call (saves tokens and ~2s).
+        raw_route = '{"mode":"rag","search_query":""}' if (not recent and _is_data_question(question)) else self.llm.chat(
             [
                 {"role": "system", "content": router_prompt},
                 {"role": "user", "content": router_input}
             ],
             temperature=0.0,
-            max_tokens=600
+            max_tokens=800
         )
 
         # 3. Đọc kết quả phân loại
@@ -434,7 +544,7 @@ class RAGPipeline:
                     raw_route.rindex("}") + 1
                 ]
             )
-            mode = parsed.get("mode", "out_of_scope")
+            mode = parsed.get("mode", "rag")
             search_question = (
                 parsed.get("search_query") or question
             )
@@ -443,33 +553,18 @@ class RAGPipeline:
                 search_question = question
 
         except (ValueError, TypeError, AttributeError):
-            mode = "out_of_scope"
+            # Router output unusable: fall back to retrieval (which still needs evidence).
+            mode = "rag"
             search_question = question
 
         # 4. Nhánh trò chuyện tự nhiên
         if not isinstance(mode, str) or mode not in {"chat", "rag", "out_of_scope"}:
-            mode = "out_of_scope"
+            mode = "rag"
 
-        # FinAI: guard financial report questions against false out_of_scope routing
-        # An LLM router can occasionally misclassify a legitimate financial
-        # analysis request. Narrow deterministic override, never for unrelated
-        # requests; the RAG answer still requires retrieved evidence.
-        normalized_question = question.casefold()
-        finance_analysis_phrases = (
-            "báo cáo tài chính", "phân tích báo cáo", "doanh thu",
-            "lợi nhuận", "dòng tiền", "bảng cân đối kế toán",
-            "lưu chuyển tiền tệ", "financial statement",
-            "revenue", "profit margin",
-        )
-        non_analysis_phrases = (
-            "làm thơ", "viết thơ", "bài thơ", "truyện", "joke",
-            "viết code", "viết chương trình", "lập trình",
-        )
-        if (
-            mode == "out_of_scope"
-            and any(x in normalized_question for x in finance_analysis_phrases)
-            and not any(x in normalized_question for x in non_analysis_phrases)
-        ):
+        # An LLM router can misclassify a legitimate question about report figures
+        # (as "chat" or "out_of_scope"). Questions that name statement line items or
+        # metrics always go to retrieval; the answer still requires retrieved evidence.
+        if mode in ("out_of_scope", "chat") and _is_data_question(question):
             mode = "rag"
             search_question = question
 
@@ -503,7 +598,7 @@ class RAGPipeline:
                         "Trả lời tự nhiên, súc tích và theo ngôn ngữ người dùng."
                     ),
                 },
-                *recent,
+                *answer_recent,
                 {"role": "user", "content": question},
             ]
             return RAGAnswer(
@@ -512,8 +607,10 @@ class RAGPipeline:
             )
 
         # 5. Nhánh RAG: dùng câu hỏi đã được viết lại
+        # The router may rewrite the question and drop cues like "đúng không",
+        # so detect explanation intent on the user's original wording as well.
         sources = self.retrieve(
-            session_id, search_question
+            session_id, search_question, explain=_wants_explanation(question)
         )
 
         if not sources:
@@ -528,19 +625,20 @@ class RAGPipeline:
             )
 
         # 6. Xây dựng context kèm nguồn
+        sources = _fit_sources(sources, _CONTEXT_CHARS)
         context = "\n\n".join(
             f"[{s.rank}] (source: {s.doc_name}"
             + (
                 f", page {s.page}"
                 if s.page is not None else ""
             )
-            + f")\n{s.text}"
+            + f")\n{s.text[:_CONTEXT_CHARS]}"
             for s in sources
         )
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            *recent
+            *answer_recent
         ]
 
         messages.append({
@@ -552,7 +650,7 @@ class RAGPipeline:
             )
         })
 
-        answer = self.llm.chat(messages)
+        answer = self.llm.chat(messages, max_tokens=2200)
 
         return RAGAnswer(
             answer=answer,

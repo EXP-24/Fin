@@ -12,6 +12,22 @@ jobs:
   # --- JOB 1: Kiểm tra Backend ---
   backend-tests:
     runs-on: ubuntu-latest # Chạy trên máy ảo Linux của GitHub
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finsight
+          POSTGRES_PASSWORD: finsight
+          POSTGRES_DB: finsight_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finsight -d finsight_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      FINSIGHT_AUTH_TEST_DATABASE_URL: postgresql+psycopg://finsight:finsight@localhost:5432/finsight_test
 
     steps:
     # Lấy code của bạn về máy ảo

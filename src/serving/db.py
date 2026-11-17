@@ -52,7 +52,9 @@ class UserRow(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="guest")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="guest")  # guest | member
+    username: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -146,6 +148,15 @@ class Database:
                 "ALTER TABLE documents "
                 "ADD COLUMN IF NOT EXISTS progress INTEGER NOT NULL DEFAULT 0"
             )
+            # Pre-guest databases: `status` is missing and username/password were NOT NULL.
+            conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'member'"
+            )
+            conn.exec_driver_sql("ALTER TABLE users ALTER COLUMN username DROP NOT NULL")
+            conn.exec_driver_sql("ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL")
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(64)")
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
+            conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)")
             # Legacy sessions stay unowned (NULL); NEVER assign them to the first guest.
             conn.exec_driver_sql(
                 "ALTER TABLE sessions "
@@ -166,15 +177,51 @@ class Database:
             s.add(AuthSessionRow(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
             return user.id
 
-    def resolve_guest(self, token_hash: str) -> str | None:
+    def resolve_user(self, token_hash: str) -> str | None:
+        """User id behind a live auth token (guest or registered member)."""
         with self._Session() as s:
             return s.scalar(
                 select(AuthSessionRow.user_id).join(UserRow).where(
                     AuthSessionRow.token_hash == token_hash,
                     AuthSessionRow.expires_at > _now(),
-                    UserRow.status == "guest",
                 )
             )
+
+    def issue_token(self, user_id: str, token_hash: str, expires_at: datetime) -> None:
+        with self._Session.begin() as s:
+            s.execute(delete(AuthSessionRow).where(AuthSessionRow.expires_at <= _now()))
+            s.add(AuthSessionRow(user_id=user_id, token_hash=token_hash, expires_at=expires_at))
+
+    def revoke_token(self, token_hash: str) -> None:
+        with self._Session.begin() as s:
+            s.execute(delete(AuthSessionRow).where(AuthSessionRow.token_hash == token_hash))
+
+    def get_user(self, user_id: str) -> dict | None:
+        with self._Session() as s:
+            u = s.get(UserRow, user_id)
+            if u is None:
+                return None
+            return {"id": u.id, "status": u.status, "username": u.username}
+
+    def get_credentials(self, username: str) -> dict | None:
+        with self._Session() as s:
+            u = s.scalar(select(UserRow).where(UserRow.username == username))
+            if u is None or not u.password_hash:
+                return None
+            return {"id": u.id, "username": u.username, "password_hash": u.password_hash}
+
+    def register_member(self, username: str, password_hash: str, guest_user_id: str | None = None) -> dict:
+        """Create a member account. A current guest is upgraded in place so the
+        sessions they already created stay theirs. Raises IntegrityError if the
+        username is taken."""
+        with self._Session.begin() as s:
+            u = s.get(UserRow, guest_user_id) if guest_user_id else None
+            if u is None or u.status != "guest":
+                u = UserRow()
+                s.add(u)
+            u.status, u.username, u.password_hash = "member", username, password_hash
+            s.flush()
+            return {"id": u.id, "status": u.status, "username": u.username}
 
     def session_belongs_to(self, sid: str, user_id: str) -> bool:
         with self._Session() as s:
@@ -193,9 +240,10 @@ class Database:
             s.flush()
             return {"id": row.id}
 
-    def session_exists(self, sid: str) -> bool:
+    def session_exists(self, sid: str, user_id: str | None = None) -> bool:
         with self._Session() as s:
-            return s.get(SessionRow, sid) is not None
+            row = s.get(SessionRow, sid)
+            return row is not None and (user_id is None or row.user_id == user_id)
 
     def get_summary(self, sid: str) -> dict | None:
         with self._Session() as s:

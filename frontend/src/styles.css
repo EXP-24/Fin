@@ -2,6 +2,188 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Galaxy theme tokens. Dark ("deep space") is the default; light is "stardust". */
+:root {
+  --c-on-background: 20 22 50;
+  --c-surface-container: 232 233 255;
+  --c-secondary-fixed-dim: 78 222 163;
+  --c-on-primary-fixed-variant: 70 55 200;
+  --c-error: 200 40 70;
+  --c-secondary-fixed: 190 250 232;
+  --c-on-tertiary-fixed-variant: 150 30 110;
+  --c-outline: 110 115 160;
+  --c-on-surface: 20 22 50;
+  --c-on-secondary: 255 255 255;
+  --c-primary-fixed-dim: 190 184 255;
+  --c-secondary-container: 190 245 228;
+  --c-on-error-container: 140 10 40;
+  --c-error-container: 255 218 224;
+  --c-tertiary-fixed: 255 215 240;
+  --c-tertiary-fixed-dim: 255 170 215;
+  --c-on-secondary-fixed: 0 50 40;
+  --c-inverse-primary: 190 184 255;
+  --c-surface-container-high: 222 224 252;
+  --c-surface-container-highest: 210 213 248;
+  --c-on-surface-variant: 80 84 120;
+  --c-inverse-on-surface: 240 242 255;
+  --c-inverse-surface: 30 32 70;
+  --c-tertiary: 200 50 140;
+  --c-on-tertiary-fixed: 70 0 45;
+  --c-on-tertiary-container: 120 10 80;
+  --c-surface-bright: 250 250 255;
+  --c-surface: 246 247 255;
+  --c-outline-variant: 186 190 228;
+  --c-primary-fixed: 228 224 255;
+  --c-on-primary-container: 50 35 160;
+  --c-tertiary-container: 255 215 240;
+  --c-on-secondary-container: 0 100 80;
+  --c-on-error: 255 255 255;
+  --c-secondary: 0 118 92;
+  --c-on-primary-fixed: 25 15 90;
+  --c-primary-container: 228 224 255;
+  --c-surface-dim: 215 218 245;
+  --c-on-secondary-fixed-variant: 0 90 70;
+  --c-surface-container-low: 240 241 255;
+  --c-on-primary: 255 255 255;
+  --c-primary: 88 70 235;
+  --c-background: 244 245 255;
+  --c-on-tertiary: 255 255 255;
+  --c-surface-tint: 88 70 235;
+  --c-surface-container-lowest: 255 255 255;
+  --c-surface-variant: 220 223 250;
+  --glass-alpha: 0.78;
+  --nebula: 0.22;
+}
+html.dark {
+  --c-on-background: 232 234 255;
+  --c-surface-container: 22 25 60;
+  --c-secondary-fixed-dim: 78 222 190;
+  --c-on-primary-fixed-variant: 200 195 255;
+  --c-error: 255 135 155;
+  --c-secondary-fixed: 150 255 225;
+  --c-on-tertiary-fixed-variant: 255 190 225;
+  --c-outline: 125 132 190;
+  --c-on-surface: 232 234 255;
+  --c-on-secondary: 0 45 36;
+  --c-primary-fixed-dim: 170 160 255;
+  --c-secondary-container: 16 92 80;
+  --c-on-error-container: 255 205 215;
+  --c-error-container: 100 22 48;
+  --c-tertiary-fixed: 255 200 230;
+  --c-tertiary-fixed-dim: 255 150 205;
+  --c-on-secondary-fixed: 0 40 30;
+  --c-inverse-primary: 90 72 235;
+  --c-surface-container-high: 32 36 80;
+  --c-surface-container-highest: 44 48 100;
+  --c-on-surface-variant: 168 174 215;
+  --c-inverse-on-surface: 30 32 70;
+  --c-inverse-surface: 225 228 255;
+  --c-tertiary: 255 140 205;
+  --c-on-tertiary-fixed: 70 0 45;
+  --c-on-tertiary-container: 255 215 238;
+  --c-surface-bright: 40 44 92;
+  --c-surface: 9 11 30;
+  --c-outline-variant: 58 64 124;
+  --c-primary-fixed: 225 221 255;
+  --c-on-primary-container: 225 220 255;
+  --c-tertiary-container: 110 30 88;
+  --c-on-secondary-container: 170 255 232;
+  --c-on-error: 90 0 20;
+  --c-secondary: 70 226 192;
+  --c-on-primary-fixed: 30 20 110;
+  --c-primary-container: 60 50 150;
+  --c-surface-dim: 7 8 22;
+  --c-on-secondary-fixed-variant: 0 100 80;
+  --c-surface-container-low: 14 16 42;
+  --c-on-primary: 255 255 255;
+  --c-primary: 124 108 255;
+  --c-background: 5 6 18;
+  --c-on-tertiary: 80 0 50;
+  --c-surface-tint: 124 108 255;
+  --c-surface-container-lowest: 8 9 26;
+  --c-surface-variant: 44 48 100;
+  --glass-alpha: 0.58;
+  --nebula: 1;
+  color-scheme: dark;
+}
+
+/* Nebula: oversized, slowly drifting color clouds behind everything. */
+body { position: relative; overflow-x: hidden; }
+body::before {
+  content: "";
+  position: fixed; inset: -25%; z-index: 0; pointer-events: none;
+  opacity: var(--nebula);
+  background:
+    radial-gradient(38rem 30rem at 18% 14%, rgb(120 84 255 / 0.40), transparent 65%),
+    radial-gradient(34rem 28rem at 84% 12%, rgb(255 80 180 / 0.24), transparent 65%),
+    radial-gradient(40rem 32rem at 74% 82%, rgb(40 150 255 / 0.28), transparent 65%),
+    radial-gradient(30rem 24rem at 12% 88%, rgb(60 90 255 / 0.22), transparent 65%),
+    radial-gradient(26rem 20rem at 50% 48%, rgb(150 70 255 / 0.12), transparent 70%);
+  animation: nebula-drift 48s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes nebula-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  50%  { transform: translate3d(2.5%, -2%, 0) scale(1.06) rotate(2deg); }
+  100% { transform: translate3d(-2.5%, 2.5%, 0) scale(1.03) rotate(-2deg); }
+}
+/* Cursor spotlight over the page. */
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(560px circle at var(--mx, 50%) var(--my, 35%), rgb(130 105 255 / 0.15), rgb(70 140 255 / 0.05) 45%, transparent 70%);
+  transition: opacity 0.4s;
+}
+html:not(.dark) body::after { background: radial-gradient(520px circle at var(--mx, 50%) var(--my, 35%), rgb(110 90 255 / 0.10), transparent 65%); }
+#root { position: relative; z-index: 1; }
+
+/* Glass: every existing "surface" card becomes frosted glass that glows under the cursor. */
+.bg-surface-container-lowest,
+.bg-surface-container-low,
+.bg-surface-container {
+  background-color: rgb(var(--c-surface-container-low) / var(--glass-alpha));
+  background-image: radial-gradient(380px circle at var(--gx, -999px) var(--gy, -999px), rgb(var(--c-primary) / 0.17), transparent 62%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+}
+input.bg-surface-container-lowest, form.bg-surface-container-lowest { background-color: rgb(var(--c-surface-container-lowest) / 0.8); }
+aside.bg-surface-container-low { background-color: rgb(var(--c-surface-dim) / 0.82); }
+/* Light theme: cards were nearly the same tone as the page. Make them white glass with a soft lift. */
+html:not(.dark) :is(.bg-surface-container-lowest, .bg-surface-container-low, .bg-surface-container):not(input):not(form):not(aside) {
+  background-color: rgb(255 255 255 / 0.72);
+  box-shadow: 0 1px 2px rgb(40 40 110 / 0.06), 0 10px 28px -14px rgb(40 40 110 / 0.22);
+}
+html:not(.dark) aside.bg-surface-container-low { background-color: rgb(255 255 255 / 0.7); }
+
+/* Primary actions get a nebula gradient + soft glow. */
+.bg-primary {
+  background-image: linear-gradient(135deg, rgb(110 88 250), rgb(40 125 255));
+  color: #fff;
+  transition: box-shadow 0.25s, transform 0.15s, filter 0.2s;
+}
+.bg-primary:hover:not(:disabled) { box-shadow: 0 0 26px -4px rgb(110 100 255 / 0.65); filter: brightness(1.08); }
+.text-gradient {
+  background: linear-gradient(120deg, rgb(160 140 255), rgb(90 170 255) 45%, rgb(255 140 210));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+html:not(.dark) .text-gradient { background-image: linear-gradient(120deg, rgb(88 70 235), rgb(30 120 240) 50%, rgb(200 50 140)); }
+.glow-ring { box-shadow: 0 0 0 1px rgb(var(--c-primary) / 0.35), 0 0 32px -8px rgb(var(--c-primary) / 0.5); }
+.orbit-float { animation: orbit-float 7s ease-in-out infinite; }
+@keyframes orbit-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+/* Opacity only: a transform animation here would make this the containing block of every position:fixed child (e.g. the chat input bar). */
+@keyframes rise { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: none; } }
+main > * { animation: rise 0.45s ease-out backwards; }
+.toast-in, .dialog-in { animation: pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.card-lift { transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s; }
+.card-lift:hover { transform: translateY(-3px); box-shadow: 0 16px 40px -18px rgb(var(--c-primary) / 0.55); border-color: rgb(var(--c-primary) / 0.5); }
+html.no-fx body::before { animation: none; }
+html.no-fx body::after { display: none; }
+html.no-fx main > *, html.no-fx .orbit-float, html.no-fx .toast-in, html.no-fx .dialog-in { animation: none; }
+html.no-fx .card-lift:hover { transform: none; }
+::selection { background: rgb(var(--c-primary) / 0.35); }
+@media (prefers-reduced-motion: reduce) { .orbit-float, main > *, body::before { animation: none; } * { scroll-behavior: auto !important; } }
+
 @layer base {
   html,
   body {
@@ -10,6 +192,7 @@
   }
   body {
     overscroll-behavior: none;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   main > :first-child {
     margin-top: 0 !important;
@@ -19,18 +202,40 @@
   }
 }
 
-::-webkit-scrollbar {
-  display: none;
-}
-
-/* Quick Dark Mode implementation */
-html.dark {
-  filter: invert(1) hue-rotate(180deg);
-  background-color: #070600; /* inverted #f8f9ff */
-}
-
-html.dark img, 
-html.dark video, 
-html.dark [style*="background-image"] {
-  filter: invert(1) hue-rotate(180deg);
+* { scrollbar-width: thin; scrollbar-color: rgb(var(--c-outline-variant)) transparent; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid rgb(var(--c-secondary)); outline-offset: 3px; }
+.answer-markdown { font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
+.answer-markdown > :first-child { margin-top: 0; }
+.answer-markdown > :last-child { margin-bottom: 0; }
+.answer-markdown p, .answer-markdown ul, .answer-markdown ol, .answer-markdown blockquote { margin: 0.8rem 0; }
+.answer-markdown h1, .answer-markdown h2, .answer-markdown h3, .answer-markdown h4 { font-weight: 650; line-height: 1.4; margin: 1.4rem 0 0.6rem; }
+.answer-markdown h1 { font-size: 1.5rem; }
+.answer-markdown h2 { font-size: 1.25rem; }
+.answer-markdown h3 { font-size: 1.1rem; }
+.answer-markdown ul { list-style: disc; padding-left: 1.5rem; }
+.answer-markdown ol { list-style: decimal; padding-left: 1.5rem; }
+.answer-markdown li { margin: 0.35rem 0; }
+.answer-markdown a { color: rgb(var(--c-secondary)); text-decoration: underline; }
+.answer-markdown blockquote { border-left: 3px solid rgb(var(--c-secondary-container)); padding-left: 1rem; color: rgb(var(--c-on-surface-variant)); }
+.answer-markdown hr { margin: 1.5rem 0; border-color: rgb(var(--c-outline-variant)); }
+.answer-markdown pre { overflow-x: auto; padding: 1rem; border-radius: 0.75rem; background: rgb(var(--c-surface-container-low)); }
+.answer-markdown code { font-family: ui-monospace, monospace; font-size: 0.9em; background: rgb(var(--c-surface-container-low)); padding: 0.1em 0.25em; border-radius: 0.25rem; }
+.answer-table { max-width: 100%; overflow-x: auto; margin: 1rem 0; border: 1px solid rgb(var(--c-outline-variant)); border-radius: 0.75rem; }
+.answer-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.answer-table th, .answer-table td { padding: 0.75rem 1rem; border-bottom: 1px solid rgb(var(--c-surface-container)); text-align: left; min-width: 120px; }
+.answer-table th { background: rgb(var(--c-surface-container-low)); font-weight: 600; }
+.answer-table tr:last-child td { border-bottom: 0; }
+.answer-table tbody tr:nth-child(even) { background: rgb(var(--c-surface)); }
+.document-progress { height: 5px; border: 0; border-radius: 99px; overflow: hidden; accent-color: rgb(var(--c-secondary)); }
+.document-progress::-webkit-progress-bar { background: rgb(var(--c-surface-container-high)); }
+.document-progress::-webkit-progress-value { background: rgb(var(--c-secondary)); transition: width 0.3s; }
+@media (max-width: 767px) {
+  aside.fixed { width: 64px; }
+  .pl-sidebar-width { padding-left: 64px; }
+  .left-sidebar-width { left: 64px; }
+  .px-margin-desktop { padding-left: 12px; padding-right: 12px; }
+  header.fixed { left: 64px; }
+  .font-display-lg { font-size: 32px; line-height: 1.25; }
+  .answer-markdown { font-size: 14px; }
 }

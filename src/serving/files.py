@@ -7,6 +7,7 @@ vector index) lives in Postgres / Qdrant / Redis.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -43,10 +44,29 @@ class FileStore:
         path.write_text(markdown, encoding="utf-8")
         return path
 
+    def processed_path(self, sid: str, doc_id: str) -> Path:
+        return self.processed_dir(sid) / f"{doc_id}.md"
+
+    def save_analysis(self, sid: str, doc_id: str, data: dict) -> Path:
+        """Extracted facts + validation report for one document (JSON)."""
+        path = self.processed_dir(sid) / f"{doc_id}.analysis.json"
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def load_analysis(self, sid: str, doc_id: str) -> dict | None:
+        path = self.processed_dir(sid) / f"{doc_id}.analysis.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
     def delete_document_files(self, sid: str, doc_id: str) -> None:
         for path in self.uploads_dir(sid).glob(f"{doc_id}.*"):
             path.unlink(missing_ok=True)
         (self.processed_dir(sid) / f"{doc_id}.md").unlink(missing_ok=True)
+        (self.processed_dir(sid) / f"{doc_id}.analysis.json").unlink(missing_ok=True)
 
     def delete_session(self, sid: str) -> None:
         shutil.rmtree(self.session_dir(sid), ignore_errors=True)

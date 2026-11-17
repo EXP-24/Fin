@@ -36,10 +36,22 @@ async function request(path, options = {}) {
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (Array.isArray(data?.detail)) {
+      throw new Error(data.detail.map((item) => item.msg).join("; "));
+    }
     const message = data?.detail || `Request failed (${res.status})`;
-    throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+    const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
+    error.status = res.status;
+    throw error;
   }
   return data;
+}
+
+// login/register replace the cookie; adopt the identity (and CSRF token) they return.
+async function startMember(path, username, password) {
+  const identity = await request(path, json({ username, password }));
+  guestBootstrap = Promise.resolve(identity);
+  return identity;
 }
 
 const json = (body) => ({
@@ -49,6 +61,14 @@ const json = (body) => ({
 });
 
 export const api = {
+  // Current identity: {user_id, status: "guest" | "member", username, csrf_token}.
+  me: () => ensureGuest(),
+  login: (username, password) => startMember("/auth/login", username, password),
+  register: (username, password) => startMember("/auth/register", username, password),
+  logout: async () => {
+    await request("/auth/logout", { method: "POST" });
+    guestBootstrap = null;  // next request starts a fresh guest
+  },
   health: () => request("/health"),
 
   listSessions: () => request("/sessions"),
@@ -59,6 +79,7 @@ export const api = {
 
   listDocuments: (id) => request(`/sessions/${id}/documents`),
   getDocument: (id, docId) => request(`/sessions/${id}/documents/${docId}`),
+  getValidation: (id, docId) => request(`/sessions/${id}/documents/${docId}/validation`),
   uploadDocument: (id, file) => {
     const form = new FormData();
     form.append("file", file);

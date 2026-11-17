@@ -40,6 +40,8 @@ class DocumentInfo(BaseModel):
     uploaded_at: str
     source: str = ""          # how text was extracted: "markdown" | "json" | "ocr" | "pdf-text"
     error: str = ""
+    validation_status: str = ""   # "" (not analysed) | "ok" | "warning" | "no_data"
+    warning_count: int = 0        # number of failed arithmetic checks
 
 
 # -------------------------------------------------------------------- chat

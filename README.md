@@ -101,7 +101,14 @@ in Postgres + Qdrant from their original uploads:
 python scripts/migrate_to_postgres.py
 ```
 
-## API surface
+## Accounts
+
+Open `/login` on the frontend to register or sign in. Accounts are persisted in
+PostgreSQL, passwords are salted scrypt hashes, and login uses revocable HttpOnly
+cookies. Sessions, documents and chat are private to their owner. See
+[`docs/auth.md`](docs/auth.md) for setup, API details, legacy-session behavior and tests.
+
+## Session API
 
 | Method | Path | Purpose |
 | --- | --- | --- |

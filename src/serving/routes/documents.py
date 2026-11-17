@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
 
+from src.extraction import ANALYSIS_VERSION, analyze_document
 from src.rag import VectorStore, chunk_markdown
 
 from ..config import Settings, get_settings
@@ -103,22 +104,66 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions/{sid}/documents", tags=["documents"])
 
 
+def get_analysis(files: FileStore, sid: str, doc: dict) -> dict | None:
+    """The document's stored facts + validation; (re)built from the stored Markdown when
+    it is missing (uploaded before this feature) or was produced by older logic."""
+    analysis = files.load_analysis(sid, doc["id"])
+    if analysis is not None and analysis.get("version") == ANALYSIS_VERSION:
+        return analysis
+    md_path = files.processed_path(sid, doc["id"])
+    if not md_path.exists():
+        return analysis  # nothing to rebuild from (still processing): keep what we have
+    markdown = md_path.read_text(encoding="utf-8")
+    analysis = analyze_document(markdown, _doc_year(doc["filename"], markdown), doc["filename"])
+    files.save_analysis(sid, doc["id"], analysis)
+    return analysis
+
+
+def _info(doc: dict, sid: str, files: FileStore) -> DocumentInfo:
+    """DocumentInfo + the validation summary read from the stored analysis."""
+    info = DocumentInfo(**doc)
+    analysis = get_analysis(files, sid, doc)
+    if analysis:
+        v = analysis.get("validation") or {}
+        info.validation_status = v.get("status", "")
+        info.warning_count = len(v.get("warnings") or [])
+    return info
+
+
 @router.get("", response_model=list[DocumentInfo])
-def list_documents(sid: str, db: Database = Depends(get_db), user_id: str = Depends(current_guest_user_id)):
+def list_documents(sid: str, db: Database = Depends(get_db), files: FileStore = Depends(get_files), user_id: str = Depends(current_guest_user_id)):
     if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return [DocumentInfo(**d) for d in db.list_documents(sid)]
+    return [_info(d, sid, files) for d in db.list_documents(sid)]
 
 
 @router.get("/{doc_id}", response_model=DocumentInfo)
-def get_document(sid: str, doc_id: str, db: Database = Depends(get_db), user_id: str = Depends(current_guest_user_id)):
+def get_document(sid: str, doc_id: str, db: Database = Depends(get_db), files: FileStore = Depends(get_files), user_id: str = Depends(current_guest_user_id)):
     """Poll a single document's current status (processing → ready/failed)."""
     if not db.session_belongs_to(sid, user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     doc = db.get_document(sid, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    return DocumentInfo(**doc)
+    return _info(doc, sid, files)
+
+
+@router.get("/{doc_id}/validation")
+def get_validation(sid: str, doc_id: str, db: Database = Depends(get_db), files: FileStore = Depends(get_files), user_id: str = Depends(current_guest_user_id)):
+    """Arithmetic-validation report (spec §3.4) for one document.
+
+    Computed at upload time; documents uploaded before this feature existed are
+    analysed lazily from their stored Markdown.
+    """
+    if not db.session_belongs_to(sid, user_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    doc = db.get_document(sid, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    analysis = get_analysis(files, sid, doc)
+    if analysis is None:
+        raise HTTPException(status_code=409, detail="Document is still being processed")
+    return {"doc_id": doc_id, "filename": doc["filename"], **analysis["validation"]}
 
 
 @router.post("", response_model=DocumentInfo, status_code=201)
@@ -194,6 +239,11 @@ def _process_document(
         t_ingest = time.perf_counter()
 
         year = _doc_year(filename, markdown)
+        # Deterministic facts + arithmetic validation. Never allowed to fail an upload.
+        try:
+            files.save_analysis(sid, doc_id, analyze_document(markdown, year, filename))
+        except Exception:  # noqa: BLE001
+            logger.exception("Statement analysis failed for %s (continuing)", doc_id)
         chunks = chunk_markdown(
             markdown,
             doc_id=doc_id,

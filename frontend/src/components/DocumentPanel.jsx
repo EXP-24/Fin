@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useLanguage } from "../i18n.jsx";
+import { useConfirm } from "./ConfirmDialog.jsx";
+import { useToast } from "./Toast.jsx";
 
 const ACCEPT = ".pdf,.md,.markdown,.json";
 
 // Document tray that stays visible above the fixed chat composer.
 // Compatible with the existing SessionPage props and FastAPI document endpoints.
 export default function DocumentPanel({ sessionId, documents = [], onChange, inputRef }) {
-  const { lang } = useLanguage();
-  const vi = lang === "VN";
+  const { lang, tr } = useLanguage();
+  const confirm = useConfirm();
+  const toast = useToast();
   const docs = Array.isArray(documents) ? documents : [];
   const [expanded, setExpanded] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -52,15 +55,21 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
 
   async function deleteFile(doc) {
     if (deletingId !== null) return;
-    const prompt = vi
-      ? `Xóa tài liệu "${doc.filename}" khỏi hội thoại này?`
-      : `Remove "${doc.filename}" from this conversation?`;
-    if (!window.confirm(prompt)) return;
+    const prompt = tr(`Xóa tài liệu "${doc.filename}" khỏi hội thoại này?`, `Remove "${doc.filename}" from this conversation?`);
+    const ok = await confirm({
+      title: tr("Xóa tài liệu?", "Remove document?"),
+      message: prompt + (tr(" Các câu trả lời dựa trên tài liệu này sẽ không còn dẫn nguồn được.", " Answers that cite it will lose their source.")),
+      confirmText: tr("Xóa", "Remove"),
+      cancelText: tr("Hủy", "Cancel"),
+      danger: true,
+    });
+    if (!ok) return;
     setError("");
     setDeletingId(doc.id);
     try {
       await api.deleteDocument(sessionId, doc.id);
       await onChange();
+      toast.success(tr("Đã xóa tài liệu.", "Document removed."));
     } catch (e) {
       setError(e.message || String(e));
       try { await onChange(); } catch { /* keep the delete error */ }
@@ -71,13 +80,13 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
 
   function statusLabel(doc) {
     if (doc.status === "processing") {
-      return vi ? `Đang xử lý ${doc.progress ?? 0}%` : `Processing ${doc.progress ?? 0}%`;
+      return tr(`Đang xử lý ${doc.progress ?? 0}%`, `Processing ${doc.progress ?? 0}%`);
     }
     if (doc.status === "ready") {
-      return vi ? `Sẵn sàng · ${doc.chunk_count ?? 0} đoạn` : `Ready · ${doc.chunk_count ?? 0} chunks`;
+      return tr(`Sẵn sàng · ${doc.chunk_count ?? 0} đoạn`, `Ready · ${doc.chunk_count ?? 0} chunks`);
     }
-    if (doc.status === "failed") return vi ? "Xử lý thất bại" : "Processing failed";
-    return doc.status || (vi ? "Chưa rõ trạng thái" : "Unknown status");
+    if (doc.status === "failed") return tr("Xử lý thất bại", "Processing failed");
+    return doc.status || (tr("Chưa rõ trạng thái", "Unknown status"));
   }
 
   return (
@@ -89,20 +98,20 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
               type="button"
               onClick={() => setExpanded((value) => !value)}
               aria-expanded={expanded}
-              title={vi ? "Ẩn/hiện tài liệu" : "Show/hide documents"}
+              title={tr("Ẩn/hiện tài liệu", "Show/hide documents")}
               className="flex min-w-0 items-center gap-2 text-on-surface hover:opacity-80"
             >
               <span className="material-symbols-outlined text-[19px]">folder_open</span>
               <span className="text-sm font-semibold truncate">
-                {vi ? "Tài liệu" : "Documents"} ({docs.length})
+                {tr("Tài liệu", "Documents")} ({docs.length})
               </span>
               <span className="material-symbols-outlined text-[18px]">
                 {expanded ? "expand_more" : "expand_less"}
               </span>
             </button>
-            <span className="text-[11px] text-on-surface-variant text-right">
-              {vi ? "Tải lên bằng biểu tượng kẹp giấy trong ô chat" : "Use the paperclip in chat to upload"}
-            </span>
+            <button type="button" disabled={uploading} onClick={() => inputRef?.current?.click()} className="shrink-0 rounded-lg bg-primary px-3 py-2 text-xs text-on-primary disabled:opacity-50">
+              {uploading ? (tr("Đang tải...", "Uploading...")) : (tr("+ Tải tài liệu", "+ Upload"))}
+            </button>
           </div>
 
           <input
@@ -120,7 +129,7 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
           {error && <div role="alert" className="mx-3 mb-2 rounded-lg bg-error-container px-3 py-2 text-xs text-on-error-container">{error}</div>}
           {uploading && (
             <div role="status" className="px-4 pb-2 text-xs text-on-surface-variant animate-pulse">
-              {vi ? "Đang tải tài liệu lên..." : "Uploading documents..."}
+              {tr("Đang tải tài liệu lên...", "Uploading documents...")}
             </div>
           )}
 
@@ -128,7 +137,7 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
             <div className="max-h-44 overflow-y-auto border-t border-outline-variant/30 px-3 py-2 space-y-1.5">
               {docs.length === 0 && !uploading && (
                 <p className="text-xs text-on-surface-variant py-1">
-                  {vi ? "Chưa có tài liệu nào trong hội thoại này." : "No documents in this conversation yet."}
+                  {tr("Chưa có tài liệu nào trong hội thoại này.", "No documents in this conversation yet.")}
                 </p>
               )}
               {docs.map((doc) => (
@@ -144,11 +153,21 @@ export default function DocumentPanel({ sessionId, documents = [], onChange, inp
                     >
                       {statusLabel(doc)}
                     </div>
+                    {doc.status === "processing" && <progress className="document-progress mt-2 block w-full" max={100} value={Math.max(0, Math.min(100, doc.progress ?? 0))} aria-label={statusLabel(doc)} />}
+                    {doc.status === "failed" && <p className="mt-1 text-xs text-error break-words">{doc.error || (tr("Vui lòng xóa tài liệu và tải lại.", "Please remove the document and upload it again."))}</p>}
+                    {doc.status === "ready" && doc.warning_count > 0 && (
+                      <p className="mt-1 flex items-start gap-1 text-xs text-tertiary break-words" role="status">
+                        <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">warning</span>
+                        <span>
+                          {tr(`${doc.warning_count} phép kiểm tra số học không khớp (có thể do OCR đọc sai). Xem chi tiết ở mục Báo cáo.`, `${doc.warning_count} arithmetic checks do not match (possibly an OCR misread). See Reports for details.`)}
+                        </span>
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
-                    title={vi ? `Xóa ${doc.filename}` : `Delete ${doc.filename}`}
-                    aria-label={vi ? `Xóa tài liệu ${doc.filename}` : `Delete document ${doc.filename}`}
+                    title={tr(`Xóa ${doc.filename}`, `Delete ${doc.filename}`)}
+                    aria-label={tr(`Xóa tài liệu ${doc.filename}`, `Delete document ${doc.filename}`)}
                     disabled={deletingId !== null}
                     onClick={() => deleteFile(doc)}
                     className="flex shrink-0 w-8 h-8 items-center justify-center rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error disabled:opacity-40"

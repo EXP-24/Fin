@@ -1,12 +1,15 @@
 import { Outlet } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
-import { LanguageProvider } from "./i18n";
+import Starfield from "./components/Starfield";
+import CommandPalette from "./components/CommandPalette";
 
 export default function App() {
   return (
-    <LanguageProvider>
-      <div className="bg-background font-body-lg text-body-lg text-on-background min-h-screen">
+    <>
+      <Starfield />
+      <CommandPalette />
+      <div className="relative z-10 font-body-lg text-body-lg text-on-background min-h-screen">
         <Sidebar />
         <div className="pl-sidebar-width flex flex-col min-h-screen">
           <Header />
@@ -15,6 +18,6 @@ export default function App() {
           </main>
         </div>
       </div>
-    </LanguageProvider>
+    </>
   );
 }
