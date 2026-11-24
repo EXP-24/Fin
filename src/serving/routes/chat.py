@@ -13,6 +13,7 @@ Postgres and the history endpoint returns nothing. Only the short-lived Redis wi
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -104,6 +105,14 @@ def ask(
         except LLMError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         answer = result.answer
+        # FIN_CHUNK_CITATIONS_V1: only show sources whose [rank] is actually cited.
+        # When the LLM forgets citation markers, show up to 3 retrieved chunks as
+        # supporting material (without inventing a reference in the answer).
+        cited_ranks = {int(n) for n in re.findall(r"(?<!\w)\[(\d{1,3})\]", answer)}
+        source_chunks = (
+            [s for s in result.sources if s.rank in cited_ranks]
+            if cited_ranks else result.sources[:3]
+        )
         citations = [
             Citation(
                 rank=s.rank,
@@ -111,9 +120,9 @@ def ask(
                 doc_name=s.doc_name,
                 page=s.page,
                 score=s.score,
-                snippet=s.text[:400],
+                snippet=s.text,  # preserve the full retrieved table/text chunk
             )
-            for s in result.sources
+            for s in source_chunks
         ]
 
     # durable history (Postgres, members only) + short-term window (Redis)

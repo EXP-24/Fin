@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../api.js";
 import { Link } from "react-router-dom";
 import { useLanguage } from "../i18n.jsx";
@@ -232,6 +232,17 @@ export default function ChatPanel({ sessionId, ready, initialPrompt, draftPrompt
 }
 
 function Message({ message }) {
+  // FIN_CHUNK_CITATIONS_V1: stable per-message source targets.
+  const citationPrefix = useId().replace(/:/g, "");
+  const sourceDetailsRef = useRef(null);
+  const citationRanks = new Set((message.citations || []).map((c) => Number(c.rank)));
+  const answerWithLinks = (message.content || "").replace(/\[(\d+)\]/g, (full, n) =>
+    citationRanks.has(Number(n)) ? `[[${n}]](#${citationPrefix}-source-${n})` : full
+  );
+  function openSource(id) {
+    if (sourceDetailsRef.current) sourceDetailsRef.current.open = true;
+    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
   const { t, lang } = useLanguage();
   const [copyStatus, setCopyStatus] = useState("");
   async function copyAnswer() {
@@ -263,8 +274,12 @@ function Message({ message }) {
         <div className="answer-markdown text-on-surface">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
             table: ({ node, ...props }) => <div className="answer-table" tabIndex={0} role="region" aria-label={lang === "VN" ? "Bảng số liệu, cuộn ngang để xem" : "Data table, scroll horizontally"}><table {...props} /></div>,
-            a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-          }}>{message.content}</ReactMarkdown>
+            a: ({ node, href, children, ...props }) => (
+              href?.startsWith(`#${citationPrefix}-source-`)
+                ? <button type="button" className="inline rounded px-1 text-primary font-semibold underline decoration-dotted hover:bg-primary/10" onClick={() => openSource(href.slice(1))}>{children}</button>
+                : <a {...props} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+            ),
+          }}>{answerWithLinks}</ReactMarkdown>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-outline-variant/30 pt-3">
           <button type="button" onClick={copyAnswer} className="inline-flex items-center gap-1 text-xs text-on-surface-variant hover:text-on-surface"><span className="material-symbols-outlined text-[16px]">content_copy</span>{lang === "VN" ? "Sao chép" : "Copy"}</button>
@@ -272,20 +287,27 @@ function Message({ message }) {
         </div>
         
         {message.citations?.length > 0 && (
-          <details className="mt-4 border-t border-outline-variant/30 pt-4 group">
+          <details ref={sourceDetailsRef} className="mt-4 border-t border-outline-variant/30 pt-4 group">
             <summary className="cursor-pointer font-label-mono text-label-mono text-on-surface-variant hover:text-on-surface flex items-center gap-1 uppercase">
               <span className="material-symbols-outlined text-[14px] transition-transform group-open:rotate-90">chevron_right</span>
               {message.citations.length} {t(message.citations.length === 1 ? "source" : "sources")}
             </summary>
             <div className="mt-4 flex flex-col gap-3">
               {message.citations.map((c) => (
-                <div key={c.rank} className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/30">
+                <div key={c.rank} id={`${citationPrefix}-source-${c.rank}`} className="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/30 scroll-mt-24">
                   <div className="flex items-center gap-2 mb-2 font-label-mono text-[11px] text-on-surface-variant">
                     <span className="bg-secondary/10 text-secondary px-1.5 py-0.5 rounded">[{c.rank}]</span>
                     <span className="truncate max-w-[200px] text-on-surface">{c.doc_name}</span>
-                    {c.page && <span>· p.{c.page}</span>}
+                    {c.page != null && <span>· p.{c.page}</span>}
                   </div>
-                  <p className="font-body-sm text-sm text-on-surface-variant italic border-l-2 border-secondary/30 pl-3">"{c.snippet}"</p>
+                  <div className="mt-2 max-h-80 overflow-auto rounded-md bg-surface-container-high p-3 text-sm text-on-surface" role="region" aria-label={`Nội dung nguồn ${c.rank}`}>
+                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                       table: ({ node, ...props }) => <div className="overflow-x-auto my-2"><table className="min-w-max border-collapse text-xs" {...props} /></div>,
+                       th: ({ node, ...props }) => <th className="border border-outline-variant/50 px-2 py-1.5 text-left font-semibold" {...props} />,
+                       td: ({ node, ...props }) => <td className="border border-outline-variant/50 px-2 py-1.5" {...props} />,
+                       a: ({ node, href, ...props }) => <a {...props} href={href} target="_blank" rel="noopener noreferrer" />,
+                     }}>{c.snippet}</ReactMarkdown>
+                   </div>
                 </div>
               ))}
             </div>
